@@ -8,8 +8,8 @@ const config = {
   password: process.env.DB_PASSWORD,
   port: parseInt(process.env.DB_PORT) || 1433,
   options: {
-    encrypt: process.env.DB_ENCRYPT !== 'false', // true cho cloud/SmarterASP
-    trustServerCertificate: process.env.DB_TRUST_CERT === 'true', // false cho production
+    encrypt: true,
+    trustServerCertificate: true, // Bắt buộc cho SmarterASP (self-signed cert)
     connectionTimeout: 30000,
     requestTimeout: 30000,
     enableArithAbort: true,
