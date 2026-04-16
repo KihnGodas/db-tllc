@@ -14,22 +14,37 @@ const { Server } = require('socket.io');
 
 // Middleware
 const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['*'];
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : [];
 
-app.use(cors({
-  origin: process.env.NODE_ENV === 'production' ? allowedOrigins : '*',
+// Cho phép tất cả nếu không set ALLOWED_ORIGINS, hoặc kiểm tra danh sách
+const corsOrigin = allowedOrigins.length === 0
+  ? '*'
+  : (origin, callback) => {
+      // Cho phép requests không có origin (mobile apps, curl, server-to-server)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS: origin ${origin} not allowed`));
+    };
+
+const corsOptions = {
+  origin: corsOrigin,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Xử lý preflight cho tất cả routes
 app.use(express.json());
 
 // HTTP + WebSocket server
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : '*',
+    origin: allowedOrigins.length === 0 ? '*' : allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true,
   },
 });
 
