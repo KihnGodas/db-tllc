@@ -12,39 +12,17 @@ const app = express();
 
 const { Server } = require('socket.io');
 
-// Middleware
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
-  : [];
-
-// Cho phép tất cả nếu không set ALLOWED_ORIGINS, hoặc kiểm tra danh sách
-const corsOrigin = allowedOrigins.length === 0
-  ? '*'
-  : (origin, callback) => {
-      // Cho phép requests không có origin (mobile apps, curl, server-to-server)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS: origin ${origin} not allowed`));
-    };
-
-const corsOptions = {
-  origin: corsOrigin,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Xử lý preflight cho tất cả routes
+// Middleware - cho phép tất cả origins
+app.use(cors());
+app.options('*', cors());
 app.use(express.json());
 
 // HTTP + WebSocket server
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: allowedOrigins.length === 0 ? '*' : allowedOrigins,
+    origin: '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    credentials: true,
   },
 });
 
