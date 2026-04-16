@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getPool, sql } = require('../config/db');
+const authMiddleware = require('../middleware/auth');
 
 // Register
 router.post('/register', async (req, res) => {
@@ -99,6 +100,81 @@ router.post('/login', async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get profile
+router.get('/profile', authMiddleware, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    const result = await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT user_id, username, name, email, phone_num, citizen_id, address, role, balance, status FROM dbo.users WHERE user_id = @user_id');
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(result.recordset[0]);
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update role
+router.post('/update-role', authMiddleware, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+    const { newRole } = req.body;
+
+    if (!newRole || !['buyer', 'seller'].includes(newRole)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const pool = getPool();
+    await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .input('role', sql.VarChar, newRole)
+      .query('UPDATE dbo.users SET role = @role WHERE user_id = @user_id');
+
+    const result = await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT user_id, username, name, email, role, balance FROM dbo.users WHERE user_id = @user_id');
+
+    res.json({ message: 'Role updated', user: result.recordset[0] });
+  } catch (error) {
+    console.error('Update role error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Add balance
+router.post('/add-balance', authMiddleware, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: 'Invalid amount' });
+    }
+
+    const pool = getPool();
+    await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .input('amount', sql.Decimal(18, 0), amount)
+      .query('UPDATE dbo.users SET balance = balance + @amount WHERE user_id = @user_id');
+
+    const result = await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
+
+    res.json({ message: 'Balance updated', newBalance: result.recordset[0].balance });
+  } catch (error) {
+    console.error('Add balance error:', error);
     res.status(500).json({ error: error.message });
   }
 });

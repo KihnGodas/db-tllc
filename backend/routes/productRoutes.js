@@ -25,7 +25,7 @@ router.get('/products', async (req, res) => {
 });
 
 // Get categories
-router.get('/categories', async (req, res) => {
+router.get('/products/categories', async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.request()
