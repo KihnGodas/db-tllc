@@ -13,14 +13,22 @@ const app = express();
 const { Server } = require('socket.io');
 
 // Middleware
-app.use(cors());
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['*'];
+
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' ? allowedOrigins : '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 // HTTP + WebSocket server
 const httpServer = http.createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: '*',
+    origin: process.env.NODE_ENV === 'production' ? allowedOrigins : '*',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
   },
 });

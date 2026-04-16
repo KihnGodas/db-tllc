@@ -7,13 +7,12 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
-    // Set these for production (Render backend) so frontend can call the correct API/WebSocket.
-    // Example:
+    // Cấu hình URL backend (Render)
+    // Đổi thành URL Render thực tế của bạn sau khi deploy
     window.AUCTION_CONFIG = {
       apiUrl: 'https://db-tllc.onrender.com/api',
       socketUrl: 'https://db-tllc.onrender.com'
     };
-    window.AUCTION_CONFIG = window.AUCTION_CONFIG || {};
   </script>
 </head>
 <body>

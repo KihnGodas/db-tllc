@@ -1,7 +1,17 @@
 const API_HOST = window.location.hostname || 'localhost';
 const AUCTION_CONFIG = window.AUCTION_CONFIG || {};
-const API_URL = AUCTION_CONFIG.apiUrl || `http://${API_HOST}:5000/api`;
-const SOCKET_URL = AUCTION_CONFIG.socketUrl || (AUCTION_CONFIG.apiUrl ? AUCTION_CONFIG.apiUrl.replace(/\/api\/?$/, '') : `http://${API_HOST}:5000`);
+
+// Tự detect: nếu chạy local thì dùng port 8080, nếu deploy thì dùng cùng domain
+const isLocal = API_HOST === 'localhost' || API_HOST === '127.0.0.1';
+const defaultApiUrl = isLocal
+  ? `http://${API_HOST}:8080/api`
+  : `${window.location.protocol}//${API_HOST}/api`;
+const defaultSocketUrl = isLocal
+  ? `http://${API_HOST}:8080`
+  : `${window.location.protocol}//${API_HOST}`;
+
+const API_URL = AUCTION_CONFIG.apiUrl || defaultApiUrl;
+const SOCKET_URL = AUCTION_CONFIG.socketUrl || (AUCTION_CONFIG.apiUrl ? AUCTION_CONFIG.apiUrl.replace(/\/api\/?$/, '') : defaultSocketUrl);
 let currentAuction = null;
 let token = localStorage.getItem('token');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
@@ -73,7 +83,7 @@ async function login(event) {
     document.getElementById('loginUsername').value = '';
     document.getElementById('loginPassword').value = '';
   } catch (error) {
-    showAlert(`Không thể kết nối tới server API (${API_URL}). Kiểm tra backend đang chạy và cổng 5000 có thể truy cập.`, 'error');
+    showAlert(`Không thể kết nối tới server API (${API_URL}). Kiểm tra backend đang chạy.`, 'error');
   }
 }
 
