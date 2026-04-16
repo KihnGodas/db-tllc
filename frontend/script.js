@@ -1013,11 +1013,6 @@ async function loadMyAuctions(type) {
           `;
           list.appendChild(item);
         });
-      }style="padding: 0.4rem 0.8rem; font-size: 0.9rem;" onclick="openInvoiceModalByAuctionId('${auction.auction_id}')">Xem hóa đơn</button>` : ''}
-            </div>
-          `;
-          list.appendChild(item);
-        });
       }
     }
   } catch (error) {
