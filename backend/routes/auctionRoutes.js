@@ -203,6 +203,38 @@ router.get('/auctions/:auction_id/bids', async (req, res) => {
   }
 });
 
+// Get invoices for current user (winner)
+router.get('/invoices', authMiddleware, async (req, res) => {
+  try {
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    // Ensure ended auctions have invoices created/updated.
+    await syncAuctionStatuses(pool);
+
+    const result = await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .query(`
+        SELECT
+          i.*,
+          a.current_price,
+          a.winner_id,
+          p.product_name,
+          p.picture_url
+        FROM dbo.invoices i
+        JOIN dbo.auctions a ON i.auction_id = a.auction_id
+        JOIN dbo.products p ON a.product_id = p.product_id
+        WHERE i.winner_id = @user_id
+        ORDER BY i.created_at DESC
+      `);
+
+    res.json(result.recordset);
+  } catch (error) {
+    console.error('Get invoices error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Place a bid (requires authentication)
 router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
   let transaction;
@@ -284,6 +316,27 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     
     await transaction.commit();
     transaction = null;
+
+    // Emit real-time update to all clients viewing this auction.
+    // We keep the payload minimal and let the frontend refresh bids list.
+    const poolAfter = getPool();
+    const updatedAuction = await poolAfter.request()
+      .input('auction_id', sql.VarChar, auction_id)
+      .query(`
+        SELECT auction_id, current_price, winner_id
+        FROM dbo.auctions
+        WHERE auction_id = @auction_id
+      `);
+
+    const updated = updatedAuction.recordset[0];
+    const io = req.app.get('io');
+    if (io && updated) {
+      io.to(`auction:${auction_id}`).emit('auction:bidsUpdated', {
+        auction_id,
+        current_price: updated.current_price,
+        winner_id: updated.winner_id,
+      });
+    }
 
     res.json({ 
       message: 'Bid placed successfully', 

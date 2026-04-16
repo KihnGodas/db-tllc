@@ -1,15 +1,27 @@
 const API_HOST = window.location.hostname || 'localhost';
-const API_URL = `http://${API_HOST}:5000/api`;
+const AUCTION_CONFIG = window.AUCTION_CONFIG || {};
+const API_URL = AUCTION_CONFIG.apiUrl || `http://${API_HOST}:5000/api`;
+const SOCKET_URL = AUCTION_CONFIG.socketUrl || (AUCTION_CONFIG.apiUrl ? AUCTION_CONFIG.apiUrl.replace(/\/api\/?$/, '') : `http://${API_HOST}:5000`);
 let currentAuction = null;
 let token = localStorage.getItem('token');
 let currentUser = JSON.parse(localStorage.getItem('currentUser') || 'null');
 let lastWinnerAnnouncedAuctionId = null;
+
+// WebSocket (socket.io) for real-time bidding updates
+let socket = null;
+let activeAuctionId = null;
+
+// Cache invoices of the logged-in user (used in "won" UI)
+let myInvoices = [];
+let myInvoicesLoaded = false;
+let myInvoicesLoadingPromise = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
   loadAuctions();
   loadCategories();
   updateUserMenu();
+  initSocket();
 });
 
 // ===== AUTH FUNCTIONS =====
@@ -202,11 +214,76 @@ function createAuctionCard(auction) {
   return card;
 }
 
+function initSocket() {
+  if (socket) return;
+  if (typeof window.io === 'undefined') {
+    console.warn('Socket.io client not found; real-time updates disabled.');
+    return;
+  }
+  if (!SOCKET_URL) return;
+
+  socket = window.io(SOCKET_URL, {
+    transports: ['websocket'],
+  });
+
+  socket.on('auction:bidsUpdated', async (payload) => {
+    if (!payload || payload.auction_id !== activeAuctionId) return;
+
+    try {
+      if (payload.current_price !== undefined) {
+        const el = document.getElementById('detailCurrentPrice');
+        if (el) el.textContent = formatCurrency(payload.current_price);
+      }
+
+      // Refresh bids list for the active auction.
+      const bidsResponse = await fetch(`${API_URL}/auctions/${payload.auction_id}/bids`);
+      const bids = await bidsResponse.json();
+
+      const bidsList = document.getElementById('bidsList');
+      if (!bidsList) return;
+      bidsList.innerHTML = '';
+
+      if (bids.length === 0) {
+        bidsList.innerHTML = '<p style="text-align: center; color: #999;">Chưa có lịch sử trả giá</p>';
+      } else {
+        bids.forEach(bid => {
+          const bidItem = document.createElement('div');
+          bidItem.className = 'bid-item';
+          bidItem.innerHTML = `
+            <div>
+              <div class="bid-user">${bid.name || bid.username}</div>
+              <div class="bid-time">${formatDateTime(bid.bid_time)}</div>
+            </div>
+            <div class="bid-price">${formatCurrency(bid.bid_price)}</div>
+          `;
+          bidsList.appendChild(bidItem);
+        });
+      }
+    } catch (error) {
+      console.error('Real-time update error:', error);
+    }
+  });
+}
+
+function joinAuctionRoom(auctionId) {
+  if (!auctionId) return;
+  initSocket();
+  if (!socket) return;
+  socket.emit('auction:join', { auction_id: auctionId });
+}
+
+function leaveAuctionRoom(auctionId) {
+  if (!auctionId || !socket) return;
+  socket.emit('auction:leave', { auction_id: auctionId });
+}
+
 async function showAuctionDetail(auctionId) {
   try {
     const response = await fetch(`${API_URL}/auctions/${auctionId}`);
     const auction = await response.json();
     currentAuction = auction;
+    activeAuctionId = auctionId;
+    joinAuctionRoom(auctionId);
 
     const bidsResponse = await fetch(`${API_URL}/auctions/${auctionId}/bids`);
     const bids = await bidsResponse.json();
@@ -225,6 +302,13 @@ async function showAuctionDetail(auctionId) {
       if (lastWinnerAnnouncedAuctionId !== auction.auction_id) {
         if (token && currentUser && currentUser.user_id === auction.winner_id) {
           showAlert(`🎉 Chúc mừng! Bạn là người thắng phiên đấu giá "${auction.product_name}" với giá ${formatCurrency(auction.current_price)}.`, 'success');
+
+          // If winner has a paid invoice, show it right away.
+          await ensureMyInvoicesLoaded(true);
+          const invoice = getInvoiceForAuction(auction.auction_id);
+          if (invoice && invoice.payment_status === 'paid') {
+            openInvoiceModal(invoice);
+          }
         } else {
           showAlert(`🏆 Phiên đấu giá đã kết thúc. Người thắng: ${auction.winner_name || auction.winner_id}.`, 'info');
         }
@@ -275,6 +359,8 @@ async function showAuctionDetail(auctionId) {
 
 function closeAuctionModal() {
   document.getElementById('auctionModal').classList.remove('show');
+  leaveAuctionRoom(activeAuctionId);
+  activeAuctionId = null;
 }
 
 function showBidForm() {
@@ -647,6 +733,86 @@ function closeProfileModal() {
 
 // ===== MY AUCTIONS FUNCTIONS =====
 
+async function ensureMyInvoicesLoaded(force = false) {
+  if (!force && myInvoicesLoaded) return;
+  if (myInvoicesLoadingPromise) return myInvoicesLoadingPromise;
+  if (force) {
+    myInvoicesLoaded = false;
+    myInvoices = [];
+  }
+
+  myInvoicesLoadingPromise = (async () => {
+    if (!token) {
+      myInvoices = [];
+      myInvoicesLoaded = true;
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/invoices`, {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        showAlert(err.error || 'Lỗi tải hóa đơn', 'error');
+        myInvoices = [];
+        return;
+      }
+
+      const invoices = await response.json();
+      myInvoices = Array.isArray(invoices) ? invoices : [];
+    } catch (error) {
+      console.error('Error loading invoices:', error);
+      showAlert('Lỗi tải hóa đơn', 'error');
+      myInvoices = [];
+    } finally {
+      myInvoicesLoaded = true;
+      myInvoicesLoadingPromise = null;
+    }
+  })();
+
+  return myInvoicesLoadingPromise;
+}
+
+function getInvoiceForAuction(auction_id) {
+  return myInvoices.find(inv => inv.auction_id === auction_id) || null;
+}
+
+function openInvoiceModal(invoice) {
+  document.getElementById('invoiceStt').textContent = invoice.stt ?? '';
+  document.getElementById('invoiceId').textContent = invoice.invoice_id ?? '';
+  document.getElementById('invoiceWinnerId').textContent = invoice.winner_id ?? '';
+  document.getElementById('invoiceAuctionId').textContent = invoice.auction_id ?? '';
+  document.getElementById('invoiceCreatedAt').textContent = invoice.created_at ? formatDateTime(invoice.created_at) : '';
+  document.getElementById('invoiceDueDate').textContent = invoice.due_date ? formatDateTime(invoice.due_date) : '';
+  document.getElementById('invoicePaymentStatus').textContent = invoice.payment_status ?? '';
+
+  document.getElementById('invoiceModal').classList.add('show');
+}
+
+async function openInvoiceModalByAuctionId(auction_id) {
+  await ensureMyInvoicesLoaded(true);
+  const invoice = getInvoiceForAuction(auction_id);
+
+  if (!invoice) {
+    showAlert('Không tìm thấy hóa đơn cho phiên này', 'error');
+    return;
+  }
+
+  if (invoice.payment_status !== 'paid') {
+    showAlert(`Hóa đơn hiện trạng thái: ${invoice.payment_status}`, 'info');
+    return;
+  }
+
+  openInvoiceModal(invoice);
+}
+
+function closeInvoiceModal() {
+  document.getElementById('invoiceModal').classList.remove('show');
+}
+
 function showMyAuctionsModal() {
   if (!token) {
     showAlert('Vui lòng đăng nhập', 'error');
@@ -655,13 +821,14 @@ function showMyAuctionsModal() {
 
   document.getElementById('myAuctionsModal').classList.add('show');
   loadMyAuctions('participating');
+  ensureMyInvoicesLoaded();
 }
 
 function closeMyAuctionsModal() {
   document.getElementById('myAuctionsModal').classList.remove('show');
 }
 
-function switchTab(tab) {
+async function switchTab(tab) {
   const participatingTab = document.getElementById('participatingTab');
   const wonTab = document.getElementById('wonTab');
 
@@ -672,6 +839,11 @@ function switchTab(tab) {
     participatingTab.style.display = 'none';
     wonTab.style.display = 'block';
   }
+
+  if (tab === 'won') {
+    await ensureMyInvoicesLoaded(true);
+  }
+  loadMyAuctions(tab);
 }
 
 async function loadMyAuctions(type) {
@@ -715,12 +887,21 @@ async function loadMyAuctions(type) {
         filteredAuctions.forEach(auction => {
           const item = document.createElement('div');
           item.className = 'bid-item';
+
+          const invoice = getInvoiceForAuction(auction.auction_id);
+          const hasPaidInvoice = invoice && invoice.payment_status === 'paid';
+          const invoiceStatus = invoice ? invoice.payment_status : 'chưa có';
+
           item.innerHTML = `
             <div>
               <div class="bid-user">${auction.product_name}</div>
               <div class="bid-time">Kết thúc: ${formatDateTime(auction.end_time)}</div>
             </div>
-            <div class="bid-price">${formatCurrency(auction.current_price)}</div>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
+              <div class="bid-price">${formatCurrency(auction.current_price)}</div>
+              <div style="color: #666; font-size: 0.9rem;">Hóa đơn: ${invoiceStatus}</div>
+              ${hasPaidInvoice ? `<button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.9rem;" onclick="openInvoiceModalByAuctionId('${auction.auction_id}')">Xem hóa đơn</button>` : ''}
+            </div>
           `;
           list.appendChild(item);
         });
@@ -984,15 +1165,17 @@ window.onclick = function(event) {
   const bidModal = document.getElementById('bidModal');
   const profileModal = document.getElementById('profileModal');
   const myAuctionsModal = document.getElementById('myAuctionsModal');
+  const invoiceModal = document.getElementById('invoiceModal');
   const registerAuctionModal = document.getElementById('registerAuctionModal');
   const sellProductModal = document.getElementById('sellProductModal');
 
   if (event.target == loginModal) loginModal.classList.remove('show');
   if (event.target == registerModal) registerModal.classList.remove('show');
-  if (event.target == auctionModal) auctionModal.classList.remove('show');
+  if (event.target == auctionModal) closeAuctionModal();
   if (event.target == bidModal) bidModal.classList.remove('show');
   if (event.target == profileModal) profileModal.classList.remove('show');
   if (event.target == myAuctionsModal) myAuctionsModal.classList.remove('show');
+  if (event.target == invoiceModal) invoiceModal.classList.remove('show');
   if (event.target == registerAuctionModal) registerAuctionModal.classList.remove('show');
   if (event.target == sellProductModal) sellProductModal.classList.remove('show');
 };

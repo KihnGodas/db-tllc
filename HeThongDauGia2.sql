@@ -9,7 +9,7 @@ CREATE TABLE dbo.users(
     role VARCHAR(20) CONSTRAINT chk_role CHECK (role IN ('seller', 'buyer')),
     name NVARCHAR(50) NOT NULL,
     phone_num VARCHAR(20) NOT NULL,
-    citizen_id VARCHAR (20) NOT NULL,
+    citizen_id VARCHAR (20) NOT NULL UNIQUE,
     email VARCHAR (50) NOT NULL,
     address NVARCHAR(100) NOT NULL,
     balance DECIMAL(18, 0) NOT NULL,
@@ -105,3 +105,32 @@ ALTER TABLE dbo.users ALTER COLUMN password VARCHAR(255) NOT NULL;
 SELECT COLUMN_NAME, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH 
 FROM INFORMATION_SCHEMA.COLUMNS 
 WHERE TABLE_NAME = 'users' AND COLUMN_NAME = 'password';
+
+PRINT 'Sample data inserted successfully!';
+SELECT * FROM dbo.users;
+SELECT * FROM dbo.products;
+SELECT * FROM dbo.auctions;
+SELECT * FROM dbo.product_categories;
+
+
+EXEC sp_MSForEachTable 'ALTER TABLE ? NOCHECK CONSTRAINT ALL';
+EXEC sp_MSForEachTable 'SET QUOTED_IDENTIFIER ON; DELETE FROM ?';
+EXEC sp_MSForEachTable 'ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL';
+
+
+DELETE FROM dbo.users;
+TRUNCATE TABLE dbo.users;
+
+
+DELETE FROM dbo.product_categories;
+TRUNCATE TABLE dbo.product_categories;
+
+
+DELETE FROM dbo.products;
+DBCC CHECKIDENT ('dbo.products', RESEED, 0);
+DBCC CHECKIDENT ('dbo.product_categories', RESEED, 0);
+DBCC CHECKIDENT ('dbo.bids_history', RESEED, 0);
+DBCC CHECKIDENT ('dbo.users', RESEED, 0);
+DBCC CHECKIDENT ('dbo.invoices', RESEED, 0);
+DBCC CHECKIDENT ('dbo.auctions', RESEED, 0);
+DBCC CHECKIDENT ('dbo.registration', RESEED, 0);

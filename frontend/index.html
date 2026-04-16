@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hệ Thống Đấu Giá Online</title>
   <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    // Set these for production (Render backend) so frontend can call the correct API/WebSocket.
+    // Example:
+    window.AUCTION_CONFIG = {
+      apiUrl: 'https://db-tllc.onrender.com/api',
+      socketUrl: 'https://db-tllc.onrender.com'
+    };
+    window.AUCTION_CONFIG = window.AUCTION_CONFIG || {};
+  </script>
 </head>
 <body>
   <nav class="navbar">
@@ -306,6 +316,24 @@
       <div id="wonTab" style="display: none;">
         <h4>Phiên Đấu Giá Đã Thắng</h4>
         <div id="wonList" class="bids-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Invoice Details -->
+  <div id="invoiceModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeInvoiceModal()">&times;</span>
+      <h3>Thông Tin Hóa Đơn</h3>
+
+      <div class="invoice-detail" style="margin-top: 1.25rem;">
+        <p><strong>STT:</strong> <span id="invoiceStt"></span></p>
+        <p><strong>Mã Hóa Đơn:</strong> <span id="invoiceId"></span></p>
+        <p><strong>Người Nhận (winner_id):</strong> <span id="invoiceWinnerId"></span></p>
+        <p><strong>Phiên Đấu Giá (auction_id):</span> <span id="invoiceAuctionId"></span></p>
+        <p><strong>Ngày Tạo:</strong> <span id="invoiceCreatedAt"></span></p>
+        <p><strong>Hạn Thanh Toán (due_date):</strong> <span id="invoiceDueDate"></span></p>
+        <p><strong>Trạng Thái Thanh Toán:</strong> <span id="invoicePaymentStatus"></span></p>
       </div>
     </div>
   </div>

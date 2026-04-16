@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
 require('dotenv').config();
 const { connectDB, closeDB } = require('./config/db');
 
@@ -9,9 +10,37 @@ const productRoutes = require('./routes/productRoutes');
 
 const app = express();
 
+const { Server } = require('socket.io');
+
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// HTTP + WebSocket server
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  },
+});
+
+app.set('io', io);
+
+io.on('connection', (socket) => {
+  // Client joins a room for a specific auction to receive real-time bid updates.
+  socket.on('auction:join', (data) => {
+    const auction_id = data?.auction_id;
+    if (!auction_id) return;
+    socket.join(`auction:${auction_id}`);
+  });
+
+  socket.on('auction:leave', (data) => {
+    const auction_id = data?.auction_id;
+    if (!auction_id) return;
+    socket.leave(`auction:${auction_id}`);
+  });
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -34,8 +63,8 @@ const PORT = process.env.PORT || 8080;
 async function startServer() {
   try {
     await connectDB();
-    app.listen(PORT, () => {
-      console.log(`🚀 Server running on http://localhost:${PORT}`);
+    httpServer.listen(PORT, () => {
+      console.log(`🚀 Server (HTTP + WebSocket) running on http://localhost:${PORT}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
