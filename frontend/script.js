@@ -791,13 +791,28 @@ function getInvoiceForAuction(auction_id) {
 }
 
 function openInvoiceModal(invoice) {
-  document.getElementById('invoiceStt').textContent = invoice.stt ?? '';
+  // Điền thông tin hóa đơn
   document.getElementById('invoiceId').textContent = invoice.invoice_id ?? '';
-  document.getElementById('invoiceWinnerId').textContent = invoice.winner_id ?? '';
+  document.getElementById('invoiceWinnerName').textContent = invoice.winner_name || invoice.winner_id || '';
+  document.getElementById('invoiceProductName').textContent = invoice.product_name || '';
   document.getElementById('invoiceAuctionId').textContent = invoice.auction_id ?? '';
+  document.getElementById('invoiceAmount').textContent = formatCurrency(invoice.current_price || 0);
   document.getElementById('invoiceCreatedAt').textContent = invoice.created_at ? formatDateTime(invoice.created_at) : '';
   document.getElementById('invoiceDueDate').textContent = invoice.due_date ? formatDateTime(invoice.due_date) : '';
-  document.getElementById('invoicePaymentStatus').textContent = invoice.payment_status ?? '';
+
+  const isPaid = invoice.payment_status === 'paid';
+  const statusEl = document.getElementById('invoicePaymentStatus');
+  statusEl.textContent = isPaid ? '✅ Đã thanh toán' : '⏳ Chưa thanh toán';
+  statusEl.style.color = isPaid ? '#28a745' : '#e74c3c';
+  statusEl.style.fontWeight = 'bold';
+
+  // Hiện/ẩn nút thanh toán
+  document.getElementById('payBalanceBtn').style.display = isPaid ? 'none' : 'inline-block';
+  document.getElementById('payQRBtn').style.display = isPaid ? 'none' : 'inline-block';
+
+  // Lưu invoice_id hiện tại để dùng khi thanh toán
+  document.getElementById('invoiceModal').dataset.invoiceId = invoice.invoice_id;
+  document.getElementById('invoiceModal').dataset.amount = invoice.current_price || 0;
 
   document.getElementById('invoiceModal').classList.add('show');
 }
@@ -811,16 +826,94 @@ async function openInvoiceModalByAuctionId(auction_id) {
     return;
   }
 
-  if (invoice.payment_status !== 'paid') {
-    showAlert(`Hóa đơn hiện trạng thái: ${invoice.payment_status}`, 'info');
-    return;
-  }
-
   openInvoiceModal(invoice);
 }
 
 function closeInvoiceModal() {
   document.getElementById('invoiceModal').classList.remove('show');
+}
+
+function printInvoice() {
+  window.print();
+}
+
+async function payInvoiceByBalance() {
+  const invoiceId = document.getElementById('invoiceModal').dataset.invoiceId;
+  if (!invoiceId || !token) return;
+
+  if (!confirm('Xác nhận thanh toán bằng số dư tài khoản?')) return;
+
+  try {
+    const response = await fetch(`${API_URL}/invoices/${invoiceId}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ method: 'balance' }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      showAlert(data.error || 'Thanh toán thất bại', 'error');
+      return;
+    }
+    showAlert('✅ Thanh toán thành công!', 'success');
+    if (data.newBalance !== undefined) {
+      currentUser.balance = data.newBalance;
+      localStorage.setItem('currentUser', JSON.stringify(currentUser));
+    }
+    // Reload invoice
+    await ensureMyInvoicesLoaded(true);
+    const updated = myInvoices.find(i => i.invoice_id == invoiceId);
+    if (updated) openInvoiceModal(updated);
+  } catch (error) {
+    showAlert(error.message, 'error');
+  }
+}
+
+function showQRPayment() {
+  const invoiceId = document.getElementById('invoiceModal').dataset.invoiceId;
+  const amount = document.getElementById('invoiceModal').dataset.amount;
+
+  // Dùng VietQR API để tạo QR thanh toán (ngân hàng mẫu: MB Bank)
+  // Format: https://img.vietqr.io/image/{bank}-{account}-{template}.png?amount={amount}&addInfo={info}
+  const bank = 'MB';           // Mã ngân hàng
+  const account = '0123456789'; // Số tài khoản của bạn - ĐỔI LẠI
+  const addInfo = `Thanh toan hoa don ${invoiceId}`;
+  const qrUrl = `https://img.vietqr.io/image/${bank}-${account}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(addInfo)}&accountName=AUCTION HUB`;
+
+  document.getElementById('qrAmount').textContent = formatCurrency(Number(amount));
+  document.getElementById('qrImage').src = qrUrl;
+  document.getElementById('qrModal').dataset.invoiceId = invoiceId;
+
+  document.getElementById('invoiceModal').classList.remove('show');
+  document.getElementById('qrModal').classList.add('show');
+}
+
+function closeQRModal() {
+  document.getElementById('qrModal').classList.remove('show');
+}
+
+async function confirmQRPayment() {
+  const invoiceId = document.getElementById('qrModal').dataset.invoiceId;
+  if (!invoiceId || !token) return;
+
+  try {
+    const response = await fetch(`${API_URL}/invoices/${invoiceId}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ method: 'qr' }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      showAlert(data.error || 'Xác nhận thất bại', 'error');
+      return;
+    }
+    showAlert('✅ Xác nhận thanh toán QR thành công!', 'success');
+    closeQRModal();
+    await ensureMyInvoicesLoaded(true);
+    const updated = myInvoices.find(i => i.invoice_id == invoiceId);
+    if (updated) openInvoiceModal(updated);
+  } catch (error) {
+    showAlert(error.message, 'error');
+  }
 }
 
 function showMyAuctionsModal() {
@@ -899,8 +992,11 @@ async function loadMyAuctions(type) {
           item.className = 'bid-item';
 
           const invoice = getInvoiceForAuction(auction.auction_id);
-          const hasPaidInvoice = invoice && invoice.payment_status === 'paid';
-          const invoiceStatus = invoice ? invoice.payment_status : 'chưa có';
+          const isPaid = invoice && invoice.payment_status === 'paid';
+          const invoiceStatus = invoice
+            ? (isPaid ? '✅ Đã thanh toán' : '⏳ Chưa thanh toán')
+            : 'Chưa có hóa đơn';
+          const statusColor = isPaid ? '#28a745' : '#e74c3c';
 
           item.innerHTML = `
             <div>
@@ -909,8 +1005,15 @@ async function loadMyAuctions(type) {
             </div>
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.5rem;">
               <div class="bid-price">${formatCurrency(auction.current_price)}</div>
-              <div style="color: #666; font-size: 0.9rem;">Hóa đơn: ${invoiceStatus}</div>
-              ${hasPaidInvoice ? `<button class="btn-secondary" style="padding: 0.4rem 0.8rem; font-size: 0.9rem;" onclick="openInvoiceModalByAuctionId('${auction.auction_id}')">Xem hóa đơn</button>` : ''}
+              <div style="color:${statusColor}; font-size: 0.9rem; font-weight:bold;">${invoiceStatus}</div>
+              ${invoice ? `<button class="btn-secondary" style="padding:0.4rem 0.8rem; font-size:0.9rem;" onclick="openInvoiceModalByAuctionId('${auction.auction_id}')">
+                ${isPaid ? '📄 Xem hóa đơn' : '💳 Thanh toán'}
+              </button>` : ''}
+            </div>
+          `;
+          list.appendChild(item);
+        });
+      }style="padding: 0.4rem 0.8rem; font-size: 0.9rem;" onclick="openInvoiceModalByAuctionId('${auction.auction_id}')">Xem hóa đơn</button>` : ''}
             </div>
           `;
           list.appendChild(item);
@@ -1178,6 +1281,7 @@ window.onclick = function(event) {
   const invoiceModal = document.getElementById('invoiceModal');
   const registerAuctionModal = document.getElementById('registerAuctionModal');
   const sellProductModal = document.getElementById('sellProductModal');
+  const qrModal = document.getElementById('qrModal');
 
   if (event.target == loginModal) loginModal.classList.remove('show');
   if (event.target == registerModal) registerModal.classList.remove('show');
@@ -1188,6 +1292,7 @@ window.onclick = function(event) {
   if (event.target == invoiceModal) invoiceModal.classList.remove('show');
   if (event.target == registerAuctionModal) registerAuctionModal.classList.remove('show');
   if (event.target == sellProductModal) sellProductModal.classList.remove('show');
+  if (event.target == qrModal) qrModal.classList.remove('show');
 };
 
 // Close dropdown when clicking outside

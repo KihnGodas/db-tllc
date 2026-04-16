@@ -508,4 +508,105 @@ router.post('/auctions', authMiddleware, async (req, res) => {
   }
 });
 
+// Pay invoice using balance
+router.post('/invoices/:invoice_id/pay', authMiddleware, async (req, res) => {
+  let transaction;
+  try {
+    const { invoice_id } = req.params;
+    const { method } = req.body; // 'balance' hoặc 'qr'
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    transaction = new sql.Transaction(pool);
+    await transaction.begin();
+
+    const invoiceResult = await new sql.Request(transaction)
+      .input('invoice_id', sql.VarChar, invoice_id)
+      .input('user_id', sql.VarChar, user_id)
+      .query(`
+        SELECT i.*, a.current_price
+        FROM dbo.invoices i
+        JOIN dbo.auctions a ON i.auction_id = a.auction_id
+        WHERE i.invoice_id = @invoice_id AND i.winner_id = @user_id
+      `);
+
+    if (invoiceResult.recordset.length === 0) {
+      await transaction.rollback();
+      return res.status(404).json({ error: 'Không tìm thấy hóa đơn' });
+    }
+
+    const invoice = invoiceResult.recordset[0];
+
+    if (invoice.payment_status === 'paid') {
+      await transaction.rollback();
+      return res.status(400).json({ error: 'Hóa đơn đã được thanh toán' });
+    }
+
+    const amount = invoice.current_price;
+
+    if (method === 'qr') {
+      // Thanh toán QR: chỉ đánh dấu paid, không trừ số dư (đã thanh toán ngoài)
+      await new sql.Request(transaction)
+        .input('invoice_id', sql.VarChar, invoice_id)
+        .query("UPDATE dbo.invoices SET payment_status = 'paid' WHERE invoice_id = @invoice_id");
+      await transaction.commit();
+      return res.json({ message: 'Xác nhận thanh toán QR thành công', method: 'qr' });
+    }
+
+    // Thanh toán bằng số dư
+    const userResult = await new sql.Request(transaction)
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
+
+    if (userResult.recordset[0].balance < amount) {
+      await transaction.rollback();
+      return res.status(400).json({ error: 'Số dư không đủ để thanh toán' });
+    }
+
+    await new sql.Request(transaction)
+      .input('user_id', sql.VarChar, user_id)
+      .input('amount', sql.Decimal(18, 0), amount)
+      .query('UPDATE dbo.users SET balance = balance - @amount WHERE user_id = @user_id');
+
+    await new sql.Request(transaction)
+      .input('invoice_id', sql.VarChar, invoice_id)
+      .query("UPDATE dbo.invoices SET payment_status = 'paid' WHERE invoice_id = @invoice_id");
+
+    await transaction.commit();
+
+    const newBalanceResult = await pool.request()
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
+
+    res.json({ message: 'Thanh toán thành công', newBalance: newBalanceResult.recordset[0].balance, method: 'balance' });
+  } catch (error) {
+    if (transaction) await transaction.rollback().catch(() => {});
+    console.error('Pay invoice error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all auction history (tất cả phiên từng tồn tại)
+router.get('/auctions/history/all', async (req, res) => {
+  try {
+    const pool = getPool();
+    await syncAuctionStatuses(pool);
+    const result = await pool.request()
+      .query(`
+        SELECT a.*, p.product_name, p.picture_url, u.name as seller_name, wu.name as winner_name,
+               i.payment_status as invoice_status, i.invoice_id
+        FROM dbo.auctions a
+        JOIN dbo.products p ON a.product_id = p.product_id
+        JOIN dbo.users u ON p.user_id = u.user_id
+        LEFT JOIN dbo.users wu ON a.winner_id = wu.user_id
+        LEFT JOIN dbo.invoices i ON a.auction_id = i.auction_id
+        ORDER BY a.created_at DESC
+      `);
+    res.json(result.recordset);
+  } catch (error) {
+    console.error('Get auction history error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

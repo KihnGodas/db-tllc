@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Hệ Thống Đấu Giá Online</title>
   <link rel="stylesheet" href="styles.css">
+  <style>
+    @media print {
+      body > *:not(#invoicePrintArea) { display: none !important; }
+      .no-print { display: none !important; }
+      #invoicePrintArea { display: block !important; box-shadow: none; }
+      .modal { display: block !important; position: static !important; background: none !important; }
+      .modal-content { box-shadow: none !important; max-height: none !important; }
+    }
+  </style>
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script>
     // Cấu hình URL backend (Render)
@@ -321,18 +330,46 @@
 
   <!-- Modal: Invoice Details -->
   <div id="invoiceModal" class="modal">
-    <div class="modal-content small">
-      <span class="close" onclick="closeInvoiceModal()">&times;</span>
-      <h3>Thông Tin Hóa Đơn</h3>
+    <div class="modal-content small" id="invoicePrintArea">
+      <span class="close no-print" onclick="closeInvoiceModal()">&times;</span>
+      <div style="text-align:center; margin-bottom:1rem;">
+        <h2 style="color:#667eea;">🏆 AuctionHub</h2>
+        <h3>HÓA ĐƠN ĐẤU GIÁ</h3>
+      </div>
 
-      <div class="invoice-detail" style="margin-top: 1.25rem;">
-        <p><strong>STT:</strong> <span id="invoiceStt"></span></p>
-        <p><strong>Mã Hóa Đơn:</strong> <span id="invoiceId"></span></p>
-        <p><strong>Người Nhận (winner_id):</strong> <span id="invoiceWinnerId"></span></p>
-        <p><strong>Phiên Đấu Giá (auction_id):</span> <span id="invoiceAuctionId"></span></p>
-        <p><strong>Ngày Tạo:</strong> <span id="invoiceCreatedAt"></span></p>
-        <p><strong>Hạn Thanh Toán (due_date):</strong> <span id="invoiceDueDate"></span></p>
-        <p><strong>Trạng Thái Thanh Toán:</strong> <span id="invoicePaymentStatus"></span></p>
+      <div class="invoice-detail" style="margin-top:1rem; line-height:2;">
+        <p><strong>Mã hóa đơn:</strong> <span id="invoiceId"></span></p>
+        <p><strong>Người thắng:</strong> <span id="invoiceWinnerName"></span></p>
+        <p><strong>Sản phẩm:</strong> <span id="invoiceProductName"></span></p>
+        <p><strong>Phiên đấu giá:</strong> <span id="invoiceAuctionId"></span></p>
+        <p><strong>Giá thắng:</strong> <span id="invoiceAmount" style="color:#e74c3c; font-weight:bold; font-size:1.2rem;"></span></p>
+        <p><strong>Ngày tạo:</strong> <span id="invoiceCreatedAt"></span></p>
+        <p><strong>Hạn thanh toán:</strong> <span id="invoiceDueDate"></span></p>
+        <p><strong>Trạng thái:</strong> <span id="invoicePaymentStatus"></span></p>
+      </div>
+
+      <div id="invoiceActions" class="no-print" style="margin-top:1.5rem; display:flex; gap:0.75rem; flex-wrap:wrap;">
+        <button class="btn-primary" onclick="printInvoice()">🖨️ In hóa đơn</button>
+        <button id="payBalanceBtn" class="btn-secondary" onclick="payInvoiceByBalance()" style="display:none;">💳 Thanh toán số dư</button>
+        <button id="payQRBtn" class="btn-secondary" onclick="showQRPayment()" style="display:none;">📱 Thanh toán QR</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: QR Payment -->
+  <div id="qrModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeQRModal()">&times;</span>
+      <h3 style="text-align:center; margin-bottom:1.5rem;">📱 Thanh Toán QR</h3>
+
+      <div style="text-align:center;">
+        <p style="margin-bottom:1rem; font-size:1rem;">Quét mã QR để thanh toán</p>
+        <p style="font-size:1.4rem; font-weight:bold; color:#e74c3c; margin-bottom:1.5rem;" id="qrAmount"></p>
+        <div style="display:flex; justify-content:center; margin-bottom:1.5rem;">
+          <img id="qrImage" src="" alt="QR Code" style="width:220px; height:220px; border:2px solid #ddd; border-radius:8px;">
+        </div>
+        <p style="color:#666; font-size:0.9rem; margin-bottom:1.5rem;">Sau khi quét và thanh toán, nhấn xác nhận để hoàn tất.</p>
+        <button class="btn-primary" style="width:100%;" onclick="confirmQRPayment()">✅ Xác Nhận Đã Thanh Toán</button>
       </div>
     </div>
   </div>
