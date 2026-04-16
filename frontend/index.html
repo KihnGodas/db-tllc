@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hệ Thống Đấu Giá Online</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="container">
+      <div class="logo">🏆 AuctionHub</div>
+      <ul class="nav-links">
+        <li><a href="#home">Trang Chủ</a></li>
+        <li><a href="#auctions">Đấu Giá</a></li>
+        <li id="user-menu" class="hidden">
+          <button onclick="toggleUserMenu()">Tài Khoản ▼</button>
+          <div id="userDropdown" class="dropdown-menu">
+            <a href="#" onclick="showProfileModal(); return false;">Hồ Sơ</a>
+            <a href="#" onclick="showMyAuctionsModal(); return false;">Đấu Giá Của Tôi</a>
+            <a href="#" onclick="showRegisterAuctionModal(); return false;">Đăng Ký Đấu Giá</a>
+            <a href="#" onclick="showSellProductModal(); return false;">📦 Đăng Bán Sản Phẩm</a>
+            <a href="#" onclick="logout(); return false;">Đăng Xuất</a>
+          </div>
+        </li>
+        <li id="auth-menu">
+          <button onclick="showLoginForm()">Đăng Nhập</button>
+          <button onclick="showRegisterForm()">Đăng Ký</button>
+        </li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <div id="home" class="hero">
+    <div class="hero-content">
+      <h1>Đấu Giá Trực Tuyến Hàng Đầu</h1>
+      <p>Mua bán sản phẩm giá rẻ qua hình thức đấu giá</p>
+      <button onclick="scrollToAuctions()" class="btn-primary">Khám Phá Ngay</button>
+    </div>
+  </div>
+
+  <!-- Auctions Section -->
+  <div id="auctions" class="section">
+    <div class="container">
+      <h2>Các Phiên Đấu Giá Đang Diễn Ra</h2>
+      
+      <div class="filters">
+        <select id="categoryFilter" onchange="filterAuctions()">
+          <option value="">Tất Cả Danh Mục</option>
+        </select>
+        <input type="search" id="searchInput" placeholder="Tìm kiếm..." onkeyup="filterAuctions()">
+      </div>
+
+      <div id="auctionsList" class="auction-grid">
+        <!-- Auctions will be loaded here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Auction Details -->
+  <div id="auctionModal" class="modal">
+    <div class="modal-content auction-detail-modal">
+      <span class="close" onclick="closeAuctionModal()">&times;</span>
+      
+      <div class="detail-grid">
+        <div class="detail-image">
+          <img id="detailImage" src="" alt="Product">
+        </div>
+        
+        <div class="detail-info">
+          <h3 id="detailName"></h3>
+          <p class="seller-info">Người bán: <strong id="detailSeller"></strong></p>
+          
+          <div class="price-section">
+            <div class="price-item">
+              <label>Giá Khởi Điểm:</label>
+              <p id="detailOpeningBid"></p>
+            </div>
+            <div class="price-item">
+              <label>Giá Hiện Tại:</label>
+              <p id="detailCurrentPrice" class="highlight"></p>
+            </div>
+            <div class="price-item">
+              <label>Mức Tăng Tối Thiểu:</label>
+              <p id="detailBidIncrement"></p>
+            </div>
+          </div>
+
+          <div class="auction-status">
+            <p><strong>Trạng Thái:</strong> <span id="detailStatus"></span></p>
+            <p><strong>Thời Gian Kết Thúc:</strong> <span id="detailEndTime"></span></p>
+            <p><strong>Số Người Tham Gia:</strong> <span id="detailParticipants"></span></p>
+          </div>
+
+          <button id="registerBtn" class="btn-secondary" onclick="registerAuction()">Đăng Ký Tham Gia</button>
+          <button id="bidBtn" class="btn-primary hidden" onclick="showBidForm()">Đặt Giá</button>
+        </div>
+      </div>
+
+      <div class="bid-history">
+        <h4>Lịch Sử Trả Giá</h4>
+        <div id="bidsList" class="bids-list">
+          <!-- Bids will be loaded here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Bid Form -->
+  <div id="bidModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeBidModal()">&times;</span>
+      <h3>Đặt Giá</h3>
+      <form onsubmit="placeBid(event)">
+        <div class="form-group">
+          <label>Giá Hiện Tại:</label>
+          <input type="number" id="currentBidDisplay" disabled>
+        </div>
+        <div class="form-group">
+          <label>Mức Tăng Tối Thiểu:</label>
+          <input type="number" id="bidIncrement" disabled>
+        </div>
+        <div class="form-group">
+          <label>Số Dư Có Sẵn:</label>
+          <input type="text" id="bidBalance" disabled style="background: #f0f0f0; font-weight: bold; color: #667eea;">
+        </div>
+        <div class="form-group">
+          <label>Giá Đặt Của Bạn:</label>
+          <input type="number" id="bidAmount" required min="0" step="1000">
+        </div>
+        <button type="submit" class="btn-primary">✅ Đặt Giá</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Register Form -->
+  <div id="registerModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeRegisterModal()">&times;</span>
+      <h3>Đăng Ký Tài Khoản</h3>
+      <form onsubmit="register(event)">
+        <div class="form-group">
+          <label>Tên Đăng Nhập:</label>
+          <input type="text" id="regUsername" required>
+        </div>
+        <div class="form-group">
+          <label>Mật Khẩu:</label>
+          <input type="password" id="regPassword" required>
+        </div>
+        <div class="form-group">
+          <label>Họ Tên:</label>
+          <input type="text" id="regName" required>
+        </div>
+        <div class="form-group">
+          <label>Email:</label>
+          <input type="email" id="regEmail" required>
+        </div>
+        <div class="form-group">
+          <label>Số Điện Thoại:</label>
+          <input type="tel" id="regPhone">
+        </div>
+        <div class="form-group">
+          <label>Số CMND/CCCD:</label>
+          <input type="text" id="regCitizenId">
+        </div>
+        <div class="form-group">
+          <label>Địa Chỉ:</label>
+          <input type="text" id="regAddress" placeholder="Tỉnh/Thành phố, Quận/Huyện, Phường/Xã">
+        </div>
+        <div class="form-group">
+          <label>Vai Trò:</label>
+          <select id="regRole" required>
+            <option value="buyer">Người Mua</option>
+            <option value="seller">Người Bán</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Nạp Tiền Ban Đầu (VNĐ):</label>
+          <input type="number" id="regBalance" min="0" value="0" required>
+          <small style="color: #666;">Số tiền bạn muốn nạp vào tài khoản</small>
+        </div>
+        <button type="submit" class="btn-primary">Đăng Ký</button>
+      </form>
+      <p>Đã có tài khoản? <a href="#" onclick="showLoginForm()">Đăng nhập</a></p>
+    </div>
+  </div>
+
+  <!-- Modal: Login Form -->
+  <div id="loginModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeLoginModal()">&times;</span>
+      <h3>Đăng Nhập</h3>
+      <form onsubmit="login(event)">
+        <div class="form-group">
+          <label>Tên Đăng Nhập:</label>
+          <input type="text" id="loginUsername" required>
+        </div>
+        <div class="form-group">
+          <label>Mật Khẩu:</label>
+          <input type="password" id="loginPassword" required>
+        </div>
+        <button type="submit" class="btn-primary">Đăng Nhập</button>
+      </form>
+      <p>Chưa có tài khoản? <a href="#" onclick="showRegisterForm()">Đăng ký</a></p>
+    </div>
+  </div>
+
+  <!-- Modal: Profile -->
+  <div id="profileModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeProfileModal()">&times;</span>
+      <h3>Hồ Sơ Của Tôi</h3>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 1.5rem;">
+        <!-- Thông tin người dùng -->
+        <div class="profile-section">
+          <h4 style="margin-bottom: 1rem; border-bottom: 2px solid #667eea; padding-bottom: 0.5rem;">📋 Thông Tin Cá Nhân</h4>
+          <div class="profile-info">
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Tên Đăng Nhập:</strong><br/>
+              <span id="profileUsername" style="color: #667eea; font-weight: bold;"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Họ Tên:</strong><br/>
+              <span id="profileName"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Email:</strong><br/>
+              <span id="profileEmail"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Số Điện Thoại:</strong><br/>
+              <span id="profilePhone"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Số CMND/CCCD:</strong><br/>
+              <span id="profileCitizenId"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Địa Chỉ:</strong><br/>
+              <span id="profileAddress"></span>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Vai Trò:</strong><br/>
+              <div style="display: grid; grid-template-columns: 1fr auto; gap: 0.5rem; align-items: end;">
+                <select id="profileRoleSelect" style="padding: 0.5rem; border: 1px solid #ddd; border-radius: 4px; font-weight: bold;">
+                  <option value="buyer">👤 Người Mua</option>
+                  <option value="seller">📦 Người Bán</option>
+                </select>
+                <button class="btn-topup" onclick="updateUserRole()" style="margin: 0; padding: 0.5rem 1rem;">Cập Nhật</button>
+              </div>
+            </p>
+            <p style="margin-bottom: 0.8rem;">
+              <strong>Trạng Thái:</strong><br/>
+              <span id="profileStatus" style="color: #28a745; font-weight: bold;">✓ Hoạt động</span>
+            </p>
+          </div>
+        </div>
+
+        <!-- Nạp tiền -->
+        <div class="profile-section">
+          <h4 style="margin-bottom: 1rem; border-bottom: 2px solid #28a745; padding-bottom: 0.5rem;">💰 Số Dư Tài Khoản</h4>
+          <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem; text-align: center;">
+            <p style="margin-bottom: 0.5rem; font-size: 14px; opacity: 0.9;">Số Dư Hiện Tại</p>
+            <p id="profileBalance" style="font-size: 28px; font-weight: bold; margin: 0;"></p>
+          </div>
+
+          <h4 style="margin-bottom: 1rem; font-size: 16px;">🏦 Nạp Tiền</h4>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 1rem;">
+            <button class="btn-topup" onclick="selectTopupAmount(100000)">100K</button>
+            <button class="btn-topup" onclick="selectTopupAmount(500000)">500K</button>
+            <button class="btn-topup" onclick="selectTopupAmount(1000000)">1M</button>
+            <button class="btn-topup" onclick="selectTopupAmount(5000000)">5M</button>
+          </div>
+
+          <div style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; font-weight: bold;">Số Tiền Tùy Chọn:</label>
+            <input type="number" id="customTopupAmount" placeholder="Nhập số tiền" style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px;">
+          </div>
+
+          <button class="btn-primary" onclick="confirmTopupBalance()" style="width: 100%;">Xác Nhận Nạp Tiền</button>
+        </div>
+      </div>
+
+      <button class="btn-secondary" onclick="closeProfileModal()" style="margin-top: 1.5rem; width: 100%;">Đóng Hồ Sơ</button>
+    </div>
+  </div>
+
+  <!-- Modal: My Auctions -->
+  <div id="myAuctionsModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeMyAuctionsModal()">&times;</span>
+      <h3>Phiên Đấu Giá Của Tôi</h3>
+      
+      <div style="margin-bottom: 1rem;">
+        <button class="btn-primary" onclick="switchTab('participating')">Đang Tham Gia</button>
+        <button class="btn-secondary" onclick="switchTab('won')" style="margin-left: 0.5rem;">Đã Thắng</button>
+      </div>
+
+      <div id="participatingTab">
+        <h4>Phiên Đấu Giá Đang Tham Gia</h4>
+        <div id="participatingList" class="bids-list"></div>
+      </div>
+
+      <div id="wonTab" style="display: none;">
+        <h4>Phiên Đấu Giá Đã Thắng</h4>
+        <div id="wonList" class="bids-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Register for Auction -->
+  <div id="registerAuctionModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeRegisterAuctionModal()">&times;</span>
+      <h3>Đăng Ký Tham Gia Phiên Đấu Giá</h3>
+      
+      <p style="margin-bottom: 1rem; color: #666;">Chọn một phiên đấu giá để đăng ký tham gia:</p>
+      
+      <div style="margin-bottom: 1rem;">
+        <input type="search" id="searchRegisterAuction" placeholder="Tìm kiếm phiên đấu giá..." style="width: 100%; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px;">
+      </div>
+
+      <div id="availableAuctionsList" class="auction-grid"></div>
+
+      <div id="selectedAuctionInfo" style="margin-top: 2rem; padding: 1rem; background: #f9f9f9; border-radius: 8px; display: none;">
+        <h4>Chi Tiết Phiên Đấu Giá</h4>
+        <p><strong>Sản Phẩm:</strong> <span id="selectedAuctionName"></span></p>
+        <p><strong>Giá Khởi Điểm:</strong> <span id="selectedAuctionPrice"></span></p>
+        <p><strong>Phí Tham Gia:</strong> <span id="selectedAuctionFee"></span></p>
+        <p><strong>Tiền Ký Cọc:</strong> <span id="selectedAuctionDeposit"></span></p>
+        <button class="btn-primary" onclick="confirmRegisterAuction()">Xác Nhận Đăng Ký</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Sell Product -->
+  <div id="sellProductModal" class="modal">
+    <div class="modal-content">
+      <span class="close" onclick="closeSellProductModal()">&times;</span>
+      <h3>📦 Đăng Bán Sản Phẩm</h3>
+      
+      <form onsubmit="submitProduct(event)" style="margin-top: 1.5rem;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <!-- Cột 1: Thông tin cơ bản -->
+          <div>
+            <div class="form-group">
+              <label><strong>Tên Sản Phẩm:</strong></label>
+              <input type="text" id="productName" placeholder="VD: iPhone 15 Pro Max" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Danh Mục:</strong></label>
+              <select id="productCategory" required>
+                <option value="">-- Chọn Danh Mục --</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Giá Khởi Điểm (VND):</strong></label>
+              <input type="number" id="productOpeningBid" placeholder="500000" min="10000" step="1000" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Mức Tăng Tối Thiểu (VND):</strong></label>
+              <input type="number" id="productBidIncrement" placeholder="50000" min="1000" step="1000" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Phí Tham Gia (VND):</strong></label>
+              <input type="number" id="productEntryFee" placeholder="100000" min="0" step="1000">
+            </div>
+
+            <div class="form-group">
+              <label><strong>Tiền Ký Cọc (VND):</strong></label>
+              <input type="number" id="productDeposit" placeholder="500000" min="0" step="1000">
+            </div>
+          </div>
+
+          <!-- Cột 2: Mô tả và hình ảnh -->
+          <div>
+            <div class="form-group" style="flex-grow: 1;">
+              <label><strong>Mô Tả Chi Tiết:</strong></label>
+              <textarea id="productDescription" placeholder="Mô tả sản phẩm của bạn..." style="width: 100%; height: 140px; padding: 0.75rem; border: 1px solid #ddd; border-radius: 4px; font-family: inherit;"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label><strong>URL Hình Ảnh:</strong></label>
+              <input type="url" id="productImage" placeholder="https://example.com/image.jpg">
+              <small style="color: #999; display: block; margin-top: 0.3rem;">Hoặc để trống để sử dụng hình mặc định</small>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Thời Gian Bắt Đầu:</strong></label>
+              <input type="datetime-local" id="productStartTime" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Thời Gian Kết Thúc:</strong></label>
+              <input type="datetime-local" id="productEndTime" required>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top: 1.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+          <button type="submit" class="btn-primary" style="padding: 0.9rem;">✅ Đăng Bán Sản Phẩm</button>
+          <button type="button" class="btn-secondary" onclick="closeSellProductModal()" style="padding: 0.9rem;">❌ Hủy</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer>
+    <p>&copy; 2024 AuctionHub - Hệ Thống Đấu Giá Trực Tuyến</p>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
