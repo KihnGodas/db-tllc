@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    CLIENT LAYER (Frontend)                   │
+│                    CLIENT LAYER (Frontend)                  │
 │  ┌──────────────────────────────────────────────────────────┐
 │  │  HTML/CSS/JavaScript (Responsive Web UI)                 │
 │  │  - Auctions listing & search                             │
