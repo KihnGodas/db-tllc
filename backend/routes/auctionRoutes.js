@@ -362,10 +362,9 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     await syncAuctionStatuses(pool, io);
     transaction = new sql.Transaction(pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-    const txRequest = new sql.Request(transaction);
 
     // Lock this auction row to prevent concurrent bid race conditions.
-    const checkAuction = await txRequest
+    const checkAuction = await new sql.Request(transaction)
       .input('auction_id', sql.VarChar, auction_id)
       .query(`
         SELECT *
@@ -390,7 +389,7 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     }
 
     // Check if user is registered for this auction
-    const checkReg = await txRequest
+    const checkReg = await new sql.Request(transaction)
       .input('auction_id', sql.VarChar, auction_id)
       .input('user_id', sql.VarChar, user_id)
       .query('SELECT * FROM dbo.registration WHERE auction_id = @auction_id AND user_id = @user_id');
@@ -410,7 +409,7 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     }
 
     // Check user balance
-    const userResult = await txRequest
+    const userResult = await new sql.Request(transaction)
       .input('user_id', sql.VarChar, user_id)
       .query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
 
