@@ -107,8 +107,10 @@
 
           <div class="auction-status">
             <p><strong>Trạng Thái:</strong> <span id="detailStatus"></span></p>
-            <p><strong>Thời Gian Đăng Ký:</strong> <span id="detailStartTime"></span></p>
-            <p><strong>Thời Gian Kết Thúc:</strong> <span id="detailEndTime"></span></p>
+            <p><strong>Thời Gian Mở Đăng Ký:</strong> <span id="detailRegStartTime"></span></p>
+            <p><strong>Thời Gian Kết Thúc Đăng Ký:</strong> <span id="detailRegEndTime"></span></p>
+            <p><strong>Thời Gian Bắt Đầu Đấu Giá:</strong> <span id="detailStartTime"></span></p>
+            <p><strong>Thời Gian Kết Thúc Đấu Giá:</strong> <span id="detailEndTime"></span></p>
             <p><strong>Số Người Tham Gia:</strong> <span id="detailParticipants"></span></p>
           </div>
 
@@ -457,12 +459,22 @@
             </div>
 
             <div class="form-group">
-              <label><strong>Thời Gian Bắt Đầu:</strong></label>
+              <label><strong>Thời Gian Mở Đăng Ký:</strong></label>
+              <input type="datetime-local" id="productRegStartTime" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Thời Gian Kết Thúc Đăng Ký:</strong></label>
+              <input type="datetime-local" id="productRegEndTime" required>
+            </div>
+
+            <div class="form-group">
+              <label><strong>Thời Gian Bắt Đầu Đấu Giá:</strong></label>
               <input type="datetime-local" id="productStartTime" required>
             </div>
 
             <div class="form-group">
-              <label><strong>Thời Gian Kết Thúc:</strong></label>
+              <label><strong>Thời Gian Kết Thúc Đấu Giá:</strong></label>
               <input type="datetime-local" id="productEndTime" required>
             </div>
           </div>

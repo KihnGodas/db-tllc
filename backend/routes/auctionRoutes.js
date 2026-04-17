@@ -384,12 +384,23 @@ router.post('/auctions/:auction_id/register', authMiddleware, async (req, res) =
 
     const auction = auctionData.recordset[0];
 
-    if (auction.auction_status === 'ended' || auction.auction_status === 'cancelled') {
-      return res.status(400).json({ error: 'Auction has ended. Registration is closed.' });
+    // Chỉ cho đăng ký khi phiên sắp bắt đầu (upcomming)
+    // Phiên đang diễn ra (ongoing) chỉ cho đặt giá, không cho đăng ký thêm
+    if (auction.auction_status === 'ongoing') {
+      return res.status(400).json({ error: 'Phiên đấu giá đang diễn ra, không thể đăng ký mới.' });
     }
 
-    if (auction.winner_id) {
-      return res.status(400).json({ error: 'Auction already has a winner. Registration is closed.' });
+    if (auction.auction_status === 'ended' || auction.auction_status === 'cancelled') {
+      return res.status(400).json({ error: 'Phiên đấu giá đã kết thúc, không thể đăng ký.' });
+    }
+
+    // Kiểm tra thời gian đăng ký
+    const now = new Date();
+    if (auction.registration_start_time && now < new Date(auction.registration_start_time)) {
+      return res.status(400).json({ error: `Chưa đến thời gian mở đăng ký. Đăng ký mở lúc: ${new Date(auction.registration_start_time).toLocaleString('vi-VN')}` });
+    }
+    if (auction.registration_end_time && now > new Date(auction.registration_end_time)) {
+      return res.status(400).json({ error: `Đã hết thời gian đăng ký (kết thúc lúc: ${new Date(auction.registration_end_time).toLocaleString('vi-VN')})` });
     }
 
     const totalFee = (auction.entry_fee || 0) + (auction.deposit || 0);
@@ -413,6 +424,8 @@ router.post('/auctions/:auction_id/register', authMiddleware, async (req, res) =
     const newBalance = userBalance - totalFee;
 
     // Insert registration and update balance in sequence
+    const registeredAt = new Date();
+
     const req1 = pool.request()
       .input('auction_id', sql.VarChar, auction_id)
       .input('user_id', sql.VarChar, user_id)
@@ -441,7 +454,10 @@ router.post('/auctions/:auction_id/register', authMiddleware, async (req, res) =
       entry_fee: auction.entry_fee,
       deposit: auction.deposit,
       totalFee: totalFee,
-      newBalance: newBalance
+      newBalance: newBalance,
+      registered_at: registeredAt,
+      auction_start: auction.start_time,
+      auction_end: auction.end_time,
     });
   } catch (error) {
     console.error('Register auction error:', error);
@@ -452,33 +468,42 @@ router.post('/auctions/:auction_id/register', authMiddleware, async (req, res) =
 // Create auction (seller only)
 router.post('/auctions', authMiddleware, async (req, res) => {
   try {
-    const { product_id, opening_bid, bid_increment, entry_fee, deposit, start_time, end_time, auction_status } = req.body;
+    const { product_id, opening_bid, bid_increment, entry_fee, deposit,
+            registration_start_time, registration_end_time,
+            start_time, end_time, auction_status } = req.body;
     const user_id = req.user.user_id;
 
-    if (!product_id || !opening_bid || !bid_increment || !start_time || !end_time) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    if (!product_id || !opening_bid || !bid_increment || !start_time || !end_time
+        || !registration_start_time || !registration_end_time) {
+      return res.status(400).json({ error: 'Vui lòng điền đầy đủ thông tin bao gồm thời gian đăng ký' });
     }
 
     const pool = getPool();
 
-    // Check if product belongs to seller
     const checkProduct = await pool.request()
       .input('product_id', sql.VarChar, product_id)
       .input('user_id', sql.VarChar, user_id)
       .query('SELECT * FROM dbo.products WHERE product_id = @product_id AND user_id = @user_id');
 
     if (checkProduct.recordset.length === 0) {
-      return res.status(403).json({ error: 'Product not found or does not belong to you' });
+      return res.status(403).json({ error: 'Sản phẩm không tồn tại hoặc không thuộc về bạn' });
     }
 
-    const startDate = new Date(start_time);
-    const endDate = new Date(end_time);
+    const regStartDate  = new Date(registration_start_time);
+    const regEndDate    = new Date(registration_end_time);
+    const startDate     = new Date(start_time);
+    const endDate       = new Date(end_time);
 
+    if (regStartDate >= regEndDate) {
+      return res.status(400).json({ error: 'Thời gian kết thúc đăng ký phải sau thời gian mở đăng ký' });
+    }
+    if (regEndDate > startDate) {
+      return res.status(400).json({ error: 'Thời gian kết thúc đăng ký phải trước hoặc bằng thời gian bắt đầu đấu giá' });
+    }
     if (startDate >= endDate) {
-      return res.status(400).json({ error: 'End time must be after start time' });
+      return res.status(400).json({ error: 'Thời gian kết thúc đấu giá phải sau thời gian bắt đầu' });
     }
 
-    // Create auction
     const result = await pool.request()
       .input('product_id', sql.VarChar, product_id)
       .input('opening_bid', sql.Decimal(18, 0), opening_bid)
@@ -486,22 +511,25 @@ router.post('/auctions', authMiddleware, async (req, res) => {
       .input('bid_increment', sql.Decimal(18, 0), bid_increment)
       .input('entry_fee', sql.Decimal(18, 0), entry_fee || 0)
       .input('deposit', sql.Decimal(18, 0), deposit || 0)
+      .input('registration_start_time', sql.DateTime, regStartDate)
+      .input('registration_end_time', sql.DateTime, regEndDate)
       .input('start_time', sql.DateTime, startDate)
       .input('end_time', sql.DateTime, endDate)
       .input('auction_status', sql.VarChar, auction_status || 'upcomming')
       .input('participant_count', sql.Int, 0)
       .query(`
-        INSERT INTO dbo.auctions (product_id, opening_bid, current_price, bid_increment, entry_fee, deposit, start_time, end_time, auction_status, participant_count)
-        VALUES (@product_id, @opening_bid, @current_price, @bid_increment, @entry_fee, @deposit, @start_time, @end_time, @auction_status, @participant_count);
-        SELECT * FROM dbo.auctions WHERE product_id = @product_id ORDER BY created_at DESC
+        INSERT INTO dbo.auctions
+          (product_id, opening_bid, current_price, bid_increment, entry_fee, deposit,
+           registration_start_time, registration_end_time, start_time, end_time,
+           auction_status, participant_count)
+        VALUES
+          (@product_id, @opening_bid, @current_price, @bid_increment, @entry_fee, @deposit,
+           @registration_start_time, @registration_end_time, @start_time, @end_time,
+           @auction_status, @participant_count);
+        SELECT TOP 1 * FROM dbo.auctions WHERE product_id = @product_id ORDER BY created_at DESC
       `);
 
-    const auction = result.recordset[result.recordset.length - 1];
-
-    res.status(201).json({
-      message: 'Auction created successfully',
-      auction,
-    });
+    res.status(201).json({ message: 'Tạo phiên đấu giá thành công', auction: result.recordset[0] });
   } catch (error) {
     console.error('Create auction error:', error);
     res.status(500).json({ error: error.message });

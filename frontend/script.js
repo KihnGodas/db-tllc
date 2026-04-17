@@ -328,6 +328,8 @@ async function showAuctionDetail(auctionId) {
     document.getElementById('detailCurrentPrice').textContent = formatCurrency(auction.current_price || auction.opening_bid);
     document.getElementById('detailBidIncrement').textContent = formatCurrency(auction.bid_increment);
     document.getElementById('detailStatus').textContent = translateStatus(auction.auction_status);
+    document.getElementById('detailRegStartTime').textContent = auction.registration_start_time ? formatDateTime(auction.registration_start_time) : 'N/A';
+    document.getElementById('detailRegEndTime').textContent = auction.registration_end_time ? formatDateTime(auction.registration_end_time) : 'N/A';
     document.getElementById('detailStartTime').textContent = formatDateTime(auction.start_time);
     document.getElementById('detailEndTime').textContent = formatDateTime(auction.end_time);
     document.getElementById('detailParticipants').textContent = auction.participant_count || 0;
@@ -1155,9 +1157,13 @@ function showSellProductModal() {
   
   // Set default times
   const now = new Date();
-  const startTime = new Date(now.getTime() + 60000); // 1 minute from now
-  const endTime = new Date(startTime.getTime() + 86400000); // 24 hours later
+  const regStart = new Date(now.getTime() + 60000);          // 1 phút nữa mở đăng ký
+  const regEnd = new Date(now.getTime() + 24 * 3600000);     // 24h sau đóng đăng ký
+  const startTime = new Date(regEnd.getTime());              // Bắt đầu đấu giá ngay sau đóng đăng ký
+  const endTime = new Date(startTime.getTime() + 24 * 3600000); // Kết thúc sau 24h
 
+  document.getElementById('productRegStartTime').value = regStart.toISOString().slice(0, 16);
+  document.getElementById('productRegEndTime').value = regEnd.toISOString().slice(0, 16);
   document.getElementById('productStartTime').value = startTime.toISOString().slice(0, 16);
   document.getElementById('productEndTime').value = endTime.toISOString().slice(0, 16);
 }
@@ -1202,14 +1208,25 @@ async function submitProduct(event) {
   const productDeposit = parseFloat(document.getElementById('productDeposit').value) || 0;
   const productStartTime = document.getElementById('productStartTime').value;
   const productEndTime = document.getElementById('productEndTime').value;
+  const productRegStartTime = document.getElementById('productRegStartTime').value;
+  const productRegEndTime = document.getElementById('productRegEndTime').value;
 
-  if (!productName || !productCategory || !productOpeningBid || !productBidIncrement || !productStartTime || !productEndTime) {
+  if (!productName || !productCategory || !productOpeningBid || !productBidIncrement
+      || !productRegStartTime || !productRegEndTime || !productStartTime || !productEndTime) {
     showAlert('Vui lòng điền đầy đủ các trường bắt buộc', 'error');
     return;
   }
 
+  if (new Date(productRegStartTime) >= new Date(productRegEndTime)) {
+    showAlert('Thời gian kết thúc đăng ký phải sau thời gian mở đăng ký', 'error');
+    return;
+  }
+  if (new Date(productRegEndTime) > new Date(productStartTime)) {
+    showAlert('Thời gian kết thúc đăng ký phải trước hoặc bằng thời gian bắt đầu đấu giá', 'error');
+    return;
+  }
   if (new Date(productStartTime) >= new Date(productEndTime)) {
-    showAlert('Thời gian kết thúc phải sau thời gian bắt đầu', 'error');
+    showAlert('Thời gian kết thúc đấu giá phải sau thời gian bắt đầu', 'error');
     return;
   }
 
@@ -1256,6 +1273,8 @@ async function submitProduct(event) {
         bid_increment: productBidIncrement,
         entry_fee: productEntryFee,
         deposit: productDeposit,
+        registration_start_time: new Date(productRegStartTime).toISOString(),
+        registration_end_time: new Date(productRegEndTime).toISOString(),
         start_time: new Date(productStartTime).toISOString(),
         end_time: new Date(productEndTime).toISOString(),
         auction_status: 'upcomming'
