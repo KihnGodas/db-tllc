@@ -583,6 +583,16 @@ router.post('/auctions', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Thời gian kết thúc đấu giá phải sau thời gian bắt đầu' });
     }
 
+    const durationMs = endDate - startDate;
+    const minMs = 30 * 60 * 1000;       // 30 phút
+    const maxMs = 24 * 60 * 60 * 1000;  // 1 ngày
+    if (durationMs < minMs) {
+      return res.status(400).json({ error: 'Thời gian đấu giá tối thiểu là 30 phút' });
+    }
+    if (durationMs > maxMs) {
+      return res.status(400).json({ error: 'Thời gian đấu giá tối đa là 1 ngày (24 giờ)' });
+    }
+
     const result = await pool.request()
       .input('product_id', sql.VarChar, product_id)
       .input('opening_bid', sql.Decimal(18, 0), opening_bid)

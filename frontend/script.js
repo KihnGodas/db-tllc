@@ -1308,6 +1308,16 @@ async function submitProduct(event) {
     return;
   }
 
+  const durationMs = new Date(productEndTime) - new Date(productStartTime);
+  if (durationMs < 30 * 60 * 1000) {
+    showAlert('Thời gian đấu giá tối thiểu là 30 phút', 'error');
+    return;
+  }
+  if (durationMs > 24 * 60 * 60 * 1000) {
+    showAlert('Thời gian đấu giá tối đa là 1 ngày (24 giờ)', 'error');
+    return;
+  }
+
   if (productOpeningBid < 10000) {
     showAlert('Giá khởi điểm tối thiểu là 10.000 VND', 'error');
     return;
