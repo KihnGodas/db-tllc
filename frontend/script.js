@@ -349,6 +349,8 @@ async function showAuctionDetail(auctionId) {
     document.getElementById('detailOpeningBid').textContent = formatCurrency(auction.opening_bid);
     document.getElementById('detailCurrentPrice').textContent = formatCurrency(auction.current_price || auction.opening_bid);
     document.getElementById('detailBidIncrement').textContent = formatCurrency(auction.bid_increment);
+    document.getElementById('detailEntryFee').textContent = formatCurrency(auction.entry_fee || 0);
+    document.getElementById('detailDeposit').textContent = formatCurrency(auction.deposit || 0);
     document.getElementById('detailStatus').textContent = translateStatus(auction.auction_status);
     document.getElementById('detailRegStartTime').textContent = auction.registration_start_time ? formatDateTime(auction.registration_start_time) : 'N/A';
     document.getElementById('detailRegEndTime').textContent = auction.registration_end_time ? formatDateTime(auction.registration_end_time) : 'N/A';
