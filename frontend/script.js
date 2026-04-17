@@ -342,6 +342,20 @@ async function showAuctionDetail(auctionId) {
     const bidsResponse = await fetch(`${API_URL}/auctions/${auctionId}/bids`);
     const bids = await bidsResponse.json();
 
+    // Kiểm tra trạng thái đăng ký nếu người dùng đã đăng nhập
+    let isRegistered = false;
+    if (token) {
+      try {
+        const regResponse = await fetch(`${API_URL}/auctions/${auctionId}/registration-status`, {
+          headers: { 'Authorization': `Bearer ${token}` },
+        });
+        const regData = await regResponse.json();
+        isRegistered = regData.isRegistered;
+      } catch (error) {
+        console.error('Error checking registration status:', error);
+      }
+    }
+
     document.getElementById('detailName').textContent = auction.product_name;
     document.getElementById('detailDescription').textContent = auction.description || '';
     document.getElementById('detailImage').src = auction.picture_url || 'https://via.placeholder.com/400x300?text=No+Image';
@@ -375,15 +389,17 @@ async function showAuctionDetail(auctionId) {
     const registerBtn = document.getElementById('registerBtn');
     const bidBtn = document.getElementById('bidBtn');
 
-    // Chỉ cho đăng ký khi phiên CHƯA bắt đầu (upcomming)
-    // Phiên đang diễn ra (ongoing) chỉ cho đặt giá, không cho đăng ký thêm
+    // Logic hiển thị nút dựa trên trạng thái phiên và đăng ký
     if (auction.auction_status === 'upcomming') {
-      registerBtn.classList.remove('hidden');
+      // Phiên sắp bắt đầu: cho đăng ký nếu chưa đăng ký
+      registerBtn.classList.toggle('hidden', isRegistered);
       bidBtn.classList.add('hidden');
-    } else if (token && auction.auction_status === 'ongoing') {
+    } else if (auction.auction_status === 'ongoing') {
+      // Phiên đang diễn ra: chỉ cho đặt giá nếu đã đăng ký
       registerBtn.classList.add('hidden');
-      bidBtn.classList.remove('hidden');
+      bidBtn.classList.toggle('hidden', !isRegistered);
     } else {
+      // Phiên đã kết thúc hoặc bị hủy: ẩn cả hai nút
       registerBtn.classList.add('hidden');
       bidBtn.classList.add('hidden');
     }

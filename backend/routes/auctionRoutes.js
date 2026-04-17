@@ -341,9 +341,15 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
 
     const auction = checkAuction.recordset[0];
 
-    if (auction.auction_status !== 'ongoing') {
+    // Check if user is registered for this auction
+    const checkReg = await txRequest
+      .input('auction_id', sql.VarChar, auction_id)
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT * FROM dbo.registration WHERE auction_id = @auction_id AND user_id = @user_id');
+
+    if (checkReg.recordset.length === 0) {
       await transaction.rollback();
-      return res.status(400).json({ error: 'Auction is not ongoing' });
+      return res.status(403).json({ error: 'Bạn phải đăng ký tham gia phiên đấu giá trước khi có thể đặt giá' });
     }
 
     // Validate bước giá: bid_price >= current_price + bid_increment
@@ -729,6 +735,26 @@ router.get('/auctions/history/all', async (req, res) => {
     res.json(result.recordset);
   } catch (error) {
     console.error('Get auction history error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Check registration status for current user
+router.get('/auctions/:auction_id/registration-status', authMiddleware, async (req, res) => {
+  try {
+    const { auction_id } = req.params;
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    const result = await pool.request()
+      .input('auction_id', sql.VarChar, auction_id)
+      .input('user_id', sql.VarChar, user_id)
+      .query('SELECT * FROM dbo.registration WHERE auction_id = @auction_id AND user_id = @user_id');
+
+    const isRegistered = result.recordset.length > 0;
+    res.json({ isRegistered });
+  } catch (error) {
+    console.error('Check registration status error:', error);
     res.status(500).json({ error: error.message });
   }
 });
