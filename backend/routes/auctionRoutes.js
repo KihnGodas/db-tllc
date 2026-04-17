@@ -3,8 +3,14 @@ const router = express.Router();
 const { getPool, sql } = require('../config/db');
 const authMiddleware = require('../middleware/auth');
 
-async function syncAuctionStatuses(pool) {
-  // Promote auctions that reached start time.
+// ─── Hằng số nghiệp vụ ───────────────────────────────────────────────────────
+const EXTENSION_WINDOW_MS = 30 * 1000;   // 30 giây cuối → gia hạn
+const EXTENSION_AMOUNT_MS = 2 * 60 * 1000; // gia hạn thêm 2 phút
+const OVERDUE_DAYS        = 7;            // quá hạn sau 7 ngày
+
+// ─── syncAuctionStatuses ─────────────────────────────────────────────────────
+async function syncAuctionStatuses(pool, io) {
+  // 1. upcomming → ongoing
   await pool.request().query(`
     UPDATE dbo.auctions
     SET auction_status = 'ongoing'
@@ -13,6 +19,81 @@ async function syncAuctionStatuses(pool) {
       AND end_time > GETDATE()
   `);
 
+  // 2. Xử lý quá hạn thanh toán: mất cọc + đấu giá lại
+  const overdueResult = await pool.request().query(`
+    SELECT i.invoice_id, i.winner_id, i.auction_id, a.deposit
+    FROM dbo.invoices i
+    JOIN dbo.auctions a ON i.auction_id = a.auction_id
+    WHERE i.payment_status = 'unpaid'
+      AND i.due_date < GETDATE()
+  `);
+
+  for (const inv of overdueResult.recordset) {
+    const t = new sql.Transaction(pool);
+    await t.begin();
+    try {
+      // Đánh dấu hóa đơn overdue
+      await new sql.Request(t)
+        .input('invoice_id', sql.VarChar, inv.invoice_id)
+        .query("UPDATE dbo.invoices SET payment_status = 'overdue' WHERE invoice_id = @invoice_id");
+
+      // Cọc đã bị trừ khi đăng ký → không hoàn lại (chế tài)
+      // Reset phiên để đấu giá lại
+      await new sql.Request(t)
+        .input('auction_id', sql.VarChar, inv.auction_id)
+        .query(`
+          UPDATE dbo.auctions
+          SET auction_status = 'upcomming',
+              winner_id = NULL,
+              current_price = opening_bid,
+              start_time = DATEADD(HOUR, 1, GETDATE()),
+              end_time   = DATEADD(HOUR, 25, GETDATE())
+          WHERE auction_id = @auction_id
+        `);
+
+      await t.commit();
+    } catch (err) {
+      await t.rollback();
+      console.error('Overdue processing error:', err.message);
+    }
+  }
+
+  // 3. Hoàn cọc cho người thua (phiên đã ended, có invoice paid/overdue)
+  const refundResult = await pool.request().query(`
+    SELECT r.user_id, r.auction_id, a.deposit
+    FROM dbo.registration r
+    JOIN dbo.auctions a ON r.auction_id = a.auction_id
+    WHERE a.auction_status = 'ended'
+      AND r.payment_status = 'paid'
+      AND a.deposit > 0
+      AND a.winner_id IS NOT NULL
+      AND r.user_id <> a.winner_id
+  `);
+
+  for (const reg of refundResult.recordset) {
+    const t = new sql.Transaction(pool);
+    await t.begin();
+    try {
+      // Đánh dấu đã hoàn để không hoàn lại lần 2
+      await new sql.Request(t)
+        .input('auction_id', sql.VarChar, reg.auction_id)
+        .input('user_id', sql.VarChar, reg.user_id)
+        .query("UPDATE dbo.registration SET payment_status = 'refunded' WHERE auction_id = @auction_id AND user_id = @user_id");
+
+      // Cộng lại tiền cọc
+      await new sql.Request(t)
+        .input('user_id', sql.VarChar, reg.user_id)
+        .input('deposit', sql.Decimal(18, 0), reg.deposit)
+        .query('UPDATE dbo.users SET balance = balance + @deposit WHERE user_id = @user_id');
+
+      await t.commit();
+    } catch (err) {
+      await t.rollback();
+      console.error('Refund deposit error:', err.message);
+    }
+  }
+
+  // 4. Kết thúc phiên (end_time đã qua)
   const endedAuctionsResult = await pool.request().query(`
     SELECT auction_id
     FROM dbo.auctions
@@ -29,21 +110,14 @@ async function syncAuctionStatuses(pool) {
       txRequest.input('auction_id', sql.VarChar, row.auction_id);
 
       const auctionResult = await txRequest.query(`
-        SELECT auction_id, current_price, winner_id, auction_status
+        SELECT auction_id, current_price, winner_id, auction_status, deposit
         FROM dbo.auctions
         WHERE auction_id = @auction_id
       `);
 
-      if (auctionResult.recordset.length === 0) {
-        await transaction.rollback();
-        continue;
-      }
-
+      if (auctionResult.recordset.length === 0) { await transaction.rollback(); continue; }
       const auction = auctionResult.recordset[0];
-      if (auction.auction_status !== 'ongoing') {
-        await transaction.rollback();
-        continue;
-      }
+      if (auction.auction_status !== 'ongoing') { await transaction.rollback(); continue; }
 
       const winnerResult = await txRequest.query(`
         SELECT TOP 1 user_id, bid_price
@@ -52,77 +126,69 @@ async function syncAuctionStatuses(pool) {
         ORDER BY bid_price DESC, bid_time ASC
       `);
 
-      let winnerId = null;
-      let winningPrice = auction.current_price;
-      if (winnerResult.recordset.length > 0) {
-        winnerId = winnerResult.recordset[0].user_id;
-        winningPrice = winnerResult.recordset[0].bid_price;
-      }
+      let winnerId = winnerResult.recordset.length > 0 ? winnerResult.recordset[0].user_id : (auction.winner_id || null);
+      let winningPrice = winnerResult.recordset.length > 0 ? winnerResult.recordset[0].bid_price : (auction.current_price || 0);
 
-      if (!winnerId && auction.winner_id) {
-        winnerId = auction.winner_id;
-      }
-
-      const finishRequest = new sql.Request(transaction);
-      finishRequest.input('auction_id', sql.VarChar, row.auction_id);
-      finishRequest.input('winner_id', sql.VarChar, winnerId);
-      finishRequest.input('winning_price', sql.Decimal(18, 0), winningPrice || 0);
-
-      await finishRequest.query(`
-        UPDATE dbo.auctions
-        SET auction_status = 'ended',
-            winner_id = @winner_id,
-            current_price = @winning_price
-        WHERE auction_id = @auction_id
-      `);
-
-      if (winnerId) {
-        const invoiceCheckRequest = new sql.Request(transaction);
-        invoiceCheckRequest.input('auction_id', sql.VarChar, row.auction_id);
-        const invoiceCheck = await invoiceCheckRequest.query(`
-          SELECT invoice_id FROM dbo.invoices WHERE auction_id = @auction_id
+      await new sql.Request(transaction)
+        .input('auction_id', sql.VarChar, row.auction_id)
+        .input('winner_id', sql.VarChar, winnerId)
+        .input('winning_price', sql.Decimal(18, 0), winningPrice)
+        .query(`
+          UPDATE dbo.auctions
+          SET auction_status = 'ended', winner_id = @winner_id, current_price = @winning_price
+          WHERE auction_id = @auction_id
         `);
 
+      if (winnerId) {
+        const invoiceCheck = await new sql.Request(transaction)
+          .input('auction_id', sql.VarChar, row.auction_id)
+          .query('SELECT invoice_id FROM dbo.invoices WHERE auction_id = @auction_id');
+
         if (invoiceCheck.recordset.length === 0) {
-          const balanceRequest = new sql.Request(transaction);
-          balanceRequest.input('winner_id', sql.VarChar, winnerId);
-          const balanceResult = await balanceRequest.query(`
-            SELECT balance FROM dbo.users WHERE user_id = @winner_id
-          `);
+          const balanceResult = await new sql.Request(transaction)
+            .input('winner_id', sql.VarChar, winnerId)
+            .query('SELECT balance FROM dbo.users WHERE user_id = @winner_id');
 
           if (balanceResult.recordset.length > 0) {
             const winnerBalance = balanceResult.recordset[0].balance;
-            const invoiceStatus = winnerBalance >= winningPrice ? 'paid' : 'unpaid';
+            // Người thắng đã nộp cọc khi đăng ký → chỉ cần trả phần còn lại
+            const deposit = auction.deposit || 0;
+            const remaining = Math.max(0, winningPrice - deposit);
+            const canPay = winnerBalance >= remaining;
+            const invoiceStatus = canPay ? 'paid' : 'unpaid';
 
-            if (winnerBalance >= winningPrice) {
-              const deductRequest = new sql.Request(transaction);
-              deductRequest
+            if (canPay && remaining > 0) {
+              await new sql.Request(transaction)
                 .input('winner_id', sql.VarChar, winnerId)
-                .input('winning_price', sql.Decimal(18, 0), winningPrice);
-              await deductRequest.query(`
-                UPDATE dbo.users
-                SET balance = balance - @winning_price
-                WHERE user_id = @winner_id
-              `);
+                .input('remaining', sql.Decimal(18, 0), remaining)
+                .query('UPDATE dbo.users SET balance = balance - @remaining WHERE user_id = @winner_id');
             }
 
-            const invoiceRequest = new sql.Request(transaction);
-            invoiceRequest
+            await new sql.Request(transaction)
               .input('winner_id', sql.VarChar, winnerId)
               .input('auction_id', sql.VarChar, row.auction_id)
-              .input('payment_status', sql.VarChar, invoiceStatus);
-            await invoiceRequest.query(`
-              INSERT INTO dbo.invoices (winner_id, auction_id, due_date, payment_status)
-              VALUES (@winner_id, @auction_id, DATEADD(DAY, 3, GETDATE()), @payment_status)
-            `);
+              .input('payment_status', sql.VarChar, invoiceStatus)
+              .query(`
+                INSERT INTO dbo.invoices (winner_id, auction_id, due_date, payment_status)
+                VALUES (@winner_id, @auction_id, DATEADD(DAY, ${OVERDUE_DAYS}, GETDATE()), @payment_status)
+              `);
           }
         }
       }
 
       await transaction.commit();
+
+      // Emit socket event khi phiên kết thúc
+      if (io) {
+        io.to(`auction:${row.auction_id}`).emit('auction:ended', {
+          auction_id: row.auction_id,
+          winner_id: winnerId,
+          final_price: winningPrice,
+        });
+      }
     } catch (error) {
       await transaction.rollback();
-      throw error;
+      console.error('End auction error:', error.message);
     }
   }
 }
@@ -131,7 +197,8 @@ async function syncAuctionStatuses(pool) {
 router.get('/auctions', async (req, res) => {
   try {
     const pool = getPool();
-    await syncAuctionStatuses(pool);
+    const io = req.app.get('io');
+    await syncAuctionStatuses(pool, io);
     const result = await pool.request()
       .query(`
         SELECT a.*, p.product_name, p.picture_url, u.name as seller_name, wu.name as winner_name
@@ -154,7 +221,8 @@ router.get('/auctions/:auction_id', async (req, res) => {
   try {
     const { auction_id } = req.params;
     const pool = getPool();
-    await syncAuctionStatuses(pool);
+    const io = req.app.get('io');
+    await syncAuctionStatuses(pool, io);
 
     const result = await pool.request()
       .input('auction_id', sql.VarChar, auction_id)
@@ -210,7 +278,8 @@ router.get('/invoices', authMiddleware, async (req, res) => {
     const pool = getPool();
 
     // Ensure ended auctions have invoices created/updated.
-    await syncAuctionStatuses(pool);
+    const io = req.app.get('io');
+    await syncAuctionStatuses(pool, io);
 
     const result = await pool.request()
       .input('user_id', sql.VarChar, user_id)
@@ -219,6 +288,7 @@ router.get('/invoices', authMiddleware, async (req, res) => {
           i.*,
           a.current_price,
           a.winner_id,
+          a.deposit,
           p.product_name,
           p.picture_url
         FROM dbo.invoices i
@@ -248,7 +318,8 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     }
 
     const pool = getPool();
-    await syncAuctionStatuses(pool);
+    const io = req.app.get('io');
+    await syncAuctionStatuses(pool, io);
     transaction = new sql.Transaction(pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     const txRequest = new sql.Request(transaction);
@@ -274,9 +345,13 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'Auction is not ongoing' });
     }
 
-    if (bid_price <= auction.current_price) {
+    // Validate bước giá: bid_price >= current_price + bid_increment
+    const minBid = Number(auction.current_price) + Number(auction.bid_increment);
+    if (bid_price < minBid) {
       await transaction.rollback();
-      return res.status(400).json({ error: 'Bid price must be higher than current price' });
+      return res.status(400).json({
+        error: `Giá đặt tối thiểu là ${minBid.toLocaleString('vi-VN')} VND (giá hiện tại + bước giá ${Number(auction.bid_increment).toLocaleString('vi-VN')} VND)`
+      });
     }
 
     // Check user balance
@@ -317,31 +392,35 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     await transaction.commit();
     transaction = null;
 
-    // Emit real-time update to all clients viewing this auction.
-    // We keep the payload minimal and let the frontend refresh bids list.
+    // ── Gia hạn 2 phút nếu bid trong 30 giây cuối ──────────────────────────
     const poolAfter = getPool();
-    const updatedAuction = await poolAfter.request()
+    const auctionNow = await poolAfter.request()
       .input('auction_id', sql.VarChar, auction_id)
-      .query(`
-        SELECT auction_id, current_price, winner_id
-        FROM dbo.auctions
-        WHERE auction_id = @auction_id
-      `);
+      .query('SELECT auction_id, current_price, winner_id, end_time FROM dbo.auctions WHERE auction_id = @auction_id');
 
-    const updated = updatedAuction.recordset[0];
-    const io = req.app.get('io');
+    const updated = auctionNow.recordset[0];
+    let newEndTime = updated.end_time;
+
+    const msLeft = new Date(updated.end_time).getTime() - Date.now();
+    if (msLeft > 0 && msLeft <= EXTENSION_WINDOW_MS) {
+      newEndTime = new Date(new Date(updated.end_time).getTime() + EXTENSION_AMOUNT_MS);
+      await poolAfter.request()
+        .input('auction_id', sql.VarChar, auction_id)
+        .input('new_end_time', sql.DateTime, newEndTime)
+        .query('UPDATE dbo.auctions SET end_time = @new_end_time WHERE auction_id = @auction_id');
+    }
+
+    // Emit real-time update
     if (io && updated) {
       io.to(`auction:${auction_id}`).emit('auction:bidsUpdated', {
         auction_id,
         current_price: updated.current_price,
         winner_id: updated.winner_id,
+        end_time: newEndTime,
       });
     }
 
-    res.json({ 
-      message: 'Bid placed successfully', 
-      bid_price
-    });
+    res.json({ message: 'Đặt giá thành công', bid_price, end_time: newEndTime });
   } catch (error) {
     if (transaction) {
       try {
@@ -361,7 +440,7 @@ router.post('/auctions/:auction_id/register', authMiddleware, async (req, res) =
     const { auction_id } = req.params;
     const user_id = req.user.user_id;
     const pool = getPool();
-    await syncAuctionStatuses(pool);
+    await syncAuctionStatuses(pool, req.app.get('io'));
 
     // Check if already registered
     const checkReg = await pool.request()
@@ -552,7 +631,7 @@ router.post('/invoices/:invoice_id/pay', authMiddleware, async (req, res) => {
       .input('invoice_id', sql.VarChar, invoice_id)
       .input('user_id', sql.VarChar, user_id)
       .query(`
-        SELECT i.*, a.current_price
+        SELECT i.*, a.current_price, a.deposit
         FROM dbo.invoices i
         JOIN dbo.auctions a ON i.auction_id = a.auction_id
         WHERE i.invoice_id = @invoice_id AND i.winner_id = @user_id
@@ -569,8 +648,14 @@ router.post('/invoices/:invoice_id/pay', authMiddleware, async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({ error: 'Hóa đơn đã được thanh toán' });
     }
+    if (invoice.payment_status === 'overdue') {
+      await transaction.rollback();
+      return res.status(400).json({ error: 'Hóa đơn đã quá hạn, không thể thanh toán' });
+    }
 
-    const amount = invoice.current_price;
+    // Chỉ thanh toán phần còn lại (tổng giá - cọc đã nộp)
+    const deposit = invoice.deposit || 0;
+    const amount = Math.max(0, invoice.current_price - deposit);
 
     if (method === 'qr') {
       // Thanh toán QR: chỉ đánh dấu paid, không trừ số dư (đã thanh toán ngoài)

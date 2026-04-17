@@ -268,14 +268,26 @@ function initSocket() {
         if (el) el.textContent = formatCurrency(payload.current_price);
       }
 
-      // Refresh bids list for the active auction.
+      // Cập nhật end_time nếu được gia hạn
+      if (payload.end_time) {
+        const endEl = document.getElementById('detailEndTime');
+        if (endEl) endEl.textContent = formatDateTime(payload.end_time);
+        startCountdown(payload.end_time);
+        // Hiện thông báo gia hạn
+        const extEl = document.getElementById('extensionNotice');
+        if (extEl) {
+          extEl.textContent = `⏰ Gia hạn! Kết thúc lúc: ${formatDateTime(payload.end_time)}`;
+          extEl.style.display = 'block';
+          setTimeout(() => { extEl.style.display = 'none'; }, 5000);
+        }
+      }
+
+      // Refresh bids list
       const bidsResponse = await fetch(`${API_URL}/auctions/${payload.auction_id}/bids`);
       const bids = await bidsResponse.json();
-
       const bidsList = document.getElementById('bidsList');
       if (!bidsList) return;
       bidsList.innerHTML = '';
-
       if (bids.length === 0) {
         bidsList.innerHTML = '<p style="text-align: center; color: #999;">Chưa có lịch sử trả giá</p>';
       } else {
@@ -295,6 +307,15 @@ function initSocket() {
     } catch (error) {
       console.error('Real-time update error:', error);
     }
+  });
+
+  socket.on('auction:ended', (payload) => {
+    if (!payload || payload.auction_id !== activeAuctionId) return;
+    if (countdownInterval) clearInterval(countdownInterval);
+    const el = document.getElementById('detailCountdown');
+    if (el) { el.textContent = '⏰ Đã kết thúc'; el.style.color = '#999'; }
+    // Reload chi tiết để cập nhật trạng thái và nút
+    showAuctionDetail(payload.auction_id);
   });
 }
 
@@ -334,6 +355,20 @@ async function showAuctionDetail(auctionId) {
     document.getElementById('detailStartTime').textContent = formatDateTime(auction.start_time);
     document.getElementById('detailEndTime').textContent = formatDateTime(auction.end_time);
     document.getElementById('detailParticipants').textContent = auction.participant_count || 0;
+
+    // Hiện giá tối thiểu hợp lệ
+    const minNext = Number(auction.current_price || auction.opening_bid) + Number(auction.bid_increment);
+    const minEl = document.getElementById('detailMinBid');
+    if (minEl) minEl.textContent = formatCurrency(minNext);
+
+    // Khởi động đồng hồ đếm ngược
+    if (auction.auction_status === 'ongoing') {
+      startCountdown(auction.end_time);
+    } else {
+      if (countdownInterval) clearInterval(countdownInterval);
+      const el = document.getElementById('detailCountdown');
+      if (el) { el.textContent = auction.auction_status === 'ended' ? '⏰ Đã kết thúc' : ''; }
+    }
 
     const registerBtn = document.getElementById('registerBtn');
     const bidBtn = document.getElementById('bidBtn');
@@ -382,6 +417,7 @@ function closeAuctionModal() {
   document.getElementById('auctionModal').classList.remove('show');
   leaveAuctionRoom(activeAuctionId);
   activeAuctionId = null;
+  if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
 }
 
 function showBidForm() {
@@ -391,7 +427,7 @@ function showBidForm() {
     return;
   }
 
-  const minBidPrice = (currentAuction.current_price || currentAuction.opening_bid) + currentAuction.bid_increment;
+  const minBidPrice = Number(currentAuction.current_price || currentAuction.opening_bid) + Number(currentAuction.bid_increment);
 
   if (currentUser.balance < minBidPrice) {
     showAlert(`⚠️ Số dư không đủ! Bạn có ${formatCurrency(currentUser.balance)}, nhưng cần tối thiểu ${formatCurrency(minBidPrice)} để đặt giá`, 'error');
@@ -566,11 +602,38 @@ function showAlert(message, type = 'info') {
   alert(message);
 }
 
+// Countdown timer cho phiên đang xem
+let countdownInterval = null;
+
+function startCountdown(endTime) {
+  if (countdownInterval) clearInterval(countdownInterval);
+  const el = document.getElementById('detailCountdown');
+  if (!el) return;
+
+  function tick() {
+    const diff = new Date(endTime).getTime() - Date.now();
+    if (diff <= 0) {
+      el.textContent = '⏰ Đã kết thúc';
+      el.style.color = '#999';
+      clearInterval(countdownInterval);
+      return;
+    }
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    const s = Math.floor((diff % 60000) / 1000);
+    const pad = n => String(n).padStart(2, '0');
+    el.textContent = `⏱ ${pad(h)}:${pad(m)}:${pad(s)}`;
+    // Đổi màu đỏ khi còn dưới 30 giây
+    el.style.color = diff <= 30000 ? '#e74c3c' : '#333';
+    el.style.fontWeight = diff <= 30000 ? 'bold' : 'normal';
+  }
+  tick();
+  countdownInterval = setInterval(tick, 1000);
+}
+
 function scrollToAuctions() {
   document.getElementById('auctions').scrollIntoView({ behavior: 'smooth' });
 }
-
-// ===== PROFILE FUNCTIONS =====
 
 let selectedTopupAmount = null;
 
@@ -811,28 +874,40 @@ function getInvoiceForAuction(auction_id) {
 }
 
 function openInvoiceModal(invoice) {
-  // Điền thông tin hóa đơn
   document.getElementById('invoiceId').textContent = invoice.invoice_id ?? '';
   document.getElementById('invoiceWinnerName').textContent = invoice.winner_name || invoice.winner_id || '';
   document.getElementById('invoiceProductName').textContent = invoice.product_name || '';
   document.getElementById('invoiceAuctionId').textContent = invoice.auction_id ?? '';
   document.getElementById('invoiceAmount').textContent = formatCurrency(invoice.current_price || 0);
+
+  const deposit = invoice.deposit || 0;
+  const remaining = Math.max(0, (invoice.current_price || 0) - deposit);
+  document.getElementById('invoiceDeposit').textContent = formatCurrency(deposit);
+  document.getElementById('invoiceRemaining').textContent = formatCurrency(remaining);
+
   document.getElementById('invoiceCreatedAt').textContent = invoice.created_at ? formatDateTime(invoice.created_at) : '';
   document.getElementById('invoiceDueDate').textContent = invoice.due_date ? formatDateTime(invoice.due_date) : '';
 
   const isPaid = invoice.payment_status === 'paid';
+  const isOverdue = invoice.payment_status === 'overdue';
   const statusEl = document.getElementById('invoicePaymentStatus');
-  statusEl.textContent = isPaid ? '✅ Đã thanh toán' : '⏳ Chưa thanh toán';
-  statusEl.style.color = isPaid ? '#28a745' : '#e74c3c';
+  if (isPaid) {
+    statusEl.textContent = '✅ Đã thanh toán';
+    statusEl.style.color = '#28a745';
+  } else if (isOverdue) {
+    statusEl.textContent = '❌ Quá hạn — Đã mất cọc';
+    statusEl.style.color = '#dc3545';
+  } else {
+    statusEl.textContent = '⏳ Chưa thanh toán';
+    statusEl.style.color = '#e74c3c';
+  }
   statusEl.style.fontWeight = 'bold';
 
-  // Hiện/ẩn nút thanh toán
-  document.getElementById('payBalanceBtn').style.display = isPaid ? 'none' : 'inline-block';
-  document.getElementById('payQRBtn').style.display = isPaid ? 'none' : 'inline-block';
+  document.getElementById('payBalanceBtn').style.display = (isPaid || isOverdue) ? 'none' : 'inline-block';
+  document.getElementById('payQRBtn').style.display = (isPaid || isOverdue) ? 'none' : 'inline-block';
 
-  // Lưu invoice_id hiện tại để dùng khi thanh toán
   document.getElementById('invoiceModal').dataset.invoiceId = invoice.invoice_id;
-  document.getElementById('invoiceModal').dataset.amount = invoice.current_price || 0;
+  document.getElementById('invoiceModal').dataset.amount = remaining; // Chỉ thanh toán phần còn lại
 
   document.getElementById('invoiceModal').classList.add('show');
 }
