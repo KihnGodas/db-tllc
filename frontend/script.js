@@ -328,13 +328,15 @@ function initSocket() {
   });
 
   socket.on('auction:ended', (payload) => {
-    if (!payload || payload.auction_id !== activeAuctionId) return;
-    if (countdownInterval) clearInterval(countdownInterval);
-    const el = document.getElementById('detailCountdown');
-    if (el) { el.textContent = '⏰ Đã kết thúc'; el.style.color = '#999'; }
+    if (!payload) return;
+    if (payload.auction_id === activeAuctionId) {
+      if (countdownInterval) clearInterval(countdownInterval);
+      const el = document.getElementById('detailCountdown');
+      if (el) { el.textContent = '⏰ Đã kết thúc'; el.style.color = '#999'; }
+    }
     
-    // Hiển thị thông báo người thắng nếu có thông tin
-    if (payload.winner_id) {
+    // Hiển thị thông báo người thắng nếu có thông tin và đang xem chi tiết
+    if (payload.winner_id && payload.auction_id === activeAuctionId) {
       const winnerAnnouncement = document.getElementById('winnerAnnouncement');
       if (winnerAnnouncement) {
         const isCurrentUserWinner = currentUser && payload.winner_id === currentUser.user_id;
@@ -348,7 +350,6 @@ function initSocket() {
         winnerAnnouncement.style.backgroundColor = bgColor;
         winnerAnnouncement.style.display = 'block';
         
-        // Thông báo đặc biệt nếu người dùng thắng
         if (isCurrentUserWinner) {
           setTimeout(() => {
             showAlert('🎉 Chúc mừng! Bạn đã thắng phiên đấu giá này!', 'success');
@@ -356,16 +357,27 @@ function initSocket() {
         }
       }
     }
-    
-    // Reload chi tiết để cập nhật trạng thái và nút
-    showAuctionDetail(payload.auction_id);
+
+    // Reload chi tiết nếu đang mở phiên này
+    if (payload.auction_id === activeAuctionId) {
+      showAuctionDetail(payload.auction_id);
+    }
+
+    // Refresh toàn bộ danh sách auctions để cập nhật trạng thái badge
+    loadAuctions();
   });
 
   socket.on('auction:statusChanged', (payload) => {
-    if (!payload || payload.auction_id !== activeAuctionId) return;
-    // Khi trạng thái phiên thay đổi (vd: upcomming → ongoing), reload lại chi tiết
+    if (!payload) return;
     console.log(`🔄 Phiên ${payload.auction_id} chuyển sang trạng thái: ${payload.new_status}`);
-    showAuctionDetail(payload.auction_id);
+
+    // Nếu người dùng đang xem chi tiết phiên đó, reload chi tiết
+    if (payload.auction_id === activeAuctionId) {
+      showAuctionDetail(payload.auction_id);
+    }
+
+    // Refresh toàn bộ danh sách auctions để cập nhật trạng thái badge
+    loadAuctions();
   });
 }
 

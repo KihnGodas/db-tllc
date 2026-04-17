@@ -71,6 +71,16 @@ async function startServer() {
       console.log(`🚀 Server (HTTP + WebSocket) running on http://localhost:${PORT}`);
     });
 
+    // ─── Initial sync at startup
+    try {
+      const { getPool } = require('./config/db');
+      const pool = getPool();
+      await syncAuctionStatuses(pool, io);
+      console.log('✅ Auction statuses synced at startup');
+    } catch (error) {
+      console.error('❌ Startup sync error:', error.message);
+    }
+
     // ─── Background job: Auto-sync auction statuses every 30 seconds ────────
     console.log('⏰ Starting background job: Auto-sync auction statuses every 30 seconds');
     setInterval(async () => {
