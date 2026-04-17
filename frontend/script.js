@@ -179,21 +179,44 @@ function toggleUserMenu() {
 
 // ===== AUCTION FUNCTIONS =====
 
+let allAuctions = []; // Cache toàn bộ danh sách để filter client-side
+
 async function loadAuctions() {
   try {
     const response = await fetch(`${API_URL}/auctions`);
-    const auctions = await response.json();
-
-    const auctionsList = document.getElementById('auctionsList');
-    auctionsList.innerHTML = '';
-
-    auctions.forEach(auction => {
-      const card = createAuctionCard(auction);
-      auctionsList.appendChild(card);
-    });
+    allAuctions = await response.json();
+    renderAuctions(allAuctions);
   } catch (error) {
     console.error('Error loading auctions:', error);
   }
+}
+
+function renderAuctions(auctions) {
+  const auctionsList = document.getElementById('auctionsList');
+  auctionsList.innerHTML = '';
+  if (auctions.length === 0) {
+    auctionsList.innerHTML = '<p style="text-align:center; color:#999; grid-column:1/-1;">Không tìm thấy phiên đấu giá nào.</p>';
+    return;
+  }
+  auctions.forEach(auction => {
+    const card = createAuctionCard(auction);
+    auctionsList.appendChild(card);
+  });
+}
+
+function filterAuctions() {
+  const categoryId = document.getElementById('categoryFilter').value;
+  const search = document.getElementById('searchInput').value.trim().toLowerCase();
+
+  const filtered = allAuctions.filter(a => {
+    const matchCategory = !categoryId || String(a.category_id) === String(categoryId);
+    const matchSearch = !search ||
+      (a.product_name && a.product_name.toLowerCase().includes(search)) ||
+      (a.seller_name && a.seller_name.toLowerCase().includes(search));
+    return matchCategory && matchSearch;
+  });
+
+  renderAuctions(filtered);
 }
 
 function createAuctionCard(auction) {
@@ -305,38 +328,23 @@ async function showAuctionDetail(auctionId) {
     document.getElementById('detailCurrentPrice').textContent = formatCurrency(auction.current_price || auction.opening_bid);
     document.getElementById('detailBidIncrement').textContent = formatCurrency(auction.bid_increment);
     document.getElementById('detailStatus').textContent = translateStatus(auction.auction_status);
+    document.getElementById('detailStartTime').textContent = formatDateTime(auction.start_time);
     document.getElementById('detailEndTime').textContent = formatDateTime(auction.end_time);
     document.getElementById('detailParticipants').textContent = auction.participant_count || 0;
-
-    if (auction.auction_status === 'ended' && auction.winner_id) {
-      if (lastWinnerAnnouncedAuctionId !== auction.auction_id) {
-        if (token && currentUser && currentUser.user_id === auction.winner_id) {
-          showAlert(`🎉 Chúc mừng! Bạn là người thắng phiên đấu giá "${auction.product_name}" với giá ${formatCurrency(auction.current_price)}.`, 'success');
-
-          // If winner has a paid invoice, show it right away.
-          await ensureMyInvoicesLoaded(true);
-          const invoice = getInvoiceForAuction(auction.auction_id);
-          if (invoice && invoice.payment_status === 'paid') {
-            openInvoiceModal(invoice);
-          }
-        } else {
-          showAlert(`🏆 Phiên đấu giá đã kết thúc. Người thắng: ${auction.winner_name || auction.winner_id}.`, 'info');
-        }
-        lastWinnerAnnouncedAuctionId = auction.auction_id;
-      }
-    }
 
     const registerBtn = document.getElementById('registerBtn');
     const bidBtn = document.getElementById('bidBtn');
 
-    if (token && auction.auction_status === 'ongoing') {
+    // Chỉ cho đăng ký khi phiên CHƯA bắt đầu (upcomming)
+    // Phiên đang diễn ra (ongoing) chỉ cho đặt giá, không cho đăng ký thêm
+    if (auction.auction_status === 'upcomming') {
+      registerBtn.classList.remove('hidden');
+      bidBtn.classList.add('hidden');
+    } else if (token && auction.auction_status === 'ongoing') {
       registerBtn.classList.add('hidden');
       bidBtn.classList.remove('hidden');
-    } else if (auction.auction_status === 'ended' || auction.auction_status === 'cancelled' || auction.winner_id) {
-      registerBtn.classList.add('hidden');
-      bidBtn.classList.add('hidden');
     } else {
-      registerBtn.classList.remove('hidden');
+      registerBtn.classList.add('hidden');
       bidBtn.classList.add('hidden');
     }
 
@@ -671,38 +679,54 @@ function selectTopupAmount(amount) {
 async function confirmTopupBalance() {
   let amount = selectedTopupAmount;
 
-  // If custom amount is entered, use that instead
   const customAmount = document.getElementById('customTopupAmount').value;
   if (customAmount && customAmount > 0) {
     amount = parseFloat(customAmount);
-    // Clear button selections
-    document.querySelectorAll('.btn-topup').forEach(btn => {
-      btn.classList.remove('active');
-    });
+    document.querySelectorAll('.btn-topup').forEach(btn => btn.classList.remove('active'));
   }
 
   if (!amount || amount <= 0) {
     showAlert('Vui lòng chọn hoặc nhập số tiền', 'error');
     return;
   }
-
   if (amount < 10000) {
     showAlert('Số tiền nạp tối thiểu là 10.000 VND', 'error');
     return;
   }
-
   if (amount > 100000000) {
     showAlert('Số tiền nạp tối đa là 100.000.000 VND', 'error');
     return;
   }
 
+  // Hiện QR để thanh toán nạp tiền
+  showTopupQR(amount);
+}
+
+function showTopupQR(amount) {
+  const bank = 'MB';            // ĐỔI thành mã ngân hàng của bạn
+  const account = '0123456789'; // ĐỔI thành số tài khoản của bạn
+  const addInfo = `Nap tien AuctionHub ${currentUser?.username || ''}`;
+  const qrUrl = `https://img.vietqr.io/image/${bank}-${account}-compact2.png?amount=${amount}&addInfo=${encodeURIComponent(addInfo)}&accountName=AUCTION HUB`;
+
+  document.getElementById('topupQRAmount').textContent = formatCurrency(amount);
+  document.getElementById('topupQRImage').src = qrUrl;
+  document.getElementById('topupQRModal').dataset.amount = amount;
+  document.getElementById('profileModal').classList.remove('show');
+  document.getElementById('topupQRModal').classList.add('show');
+}
+
+function closeTopupQRModal() {
+  document.getElementById('topupQRModal').classList.remove('show');
+}
+
+async function confirmTopupQR() {
+  const amount = parseFloat(document.getElementById('topupQRModal').dataset.amount);
+  if (!amount || !token) return;
+
   try {
     const response = await fetch(`${API_URL}/auth/add-balance`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       body: JSON.stringify({ amount }),
     });
 
@@ -713,25 +737,18 @@ async function confirmTopupBalance() {
     }
 
     const data = await response.json();
-    
-    // Update balance display
-    document.getElementById('profileBalance').textContent = formatCurrency(data.newBalance);
-    
-    // Update localStorage
     currentUser.balance = data.newBalance;
     localStorage.setItem('currentUser', JSON.stringify(currentUser));
 
-    showAlert(`Nạp tiền thành công! +${formatCurrency(amount)}`, 'success');
-    
-    // Reset form
+    closeTopupQRModal();
+    showAlert(`✅ Nạp tiền thành công! +${formatCurrency(amount)}`, 'success');
+
+    // Reset form và cập nhật số dư trong profile
     selectedTopupAmount = null;
     document.getElementById('customTopupAmount').value = '';
-    document.querySelectorAll('.btn-topup').forEach(btn => {
-      btn.classList.remove('active');
-    });
-
-    // Update navbar
-    updateUserMenu();
+    document.querySelectorAll('.btn-topup').forEach(btn => btn.classList.remove('active'));
+    document.getElementById('profileBalance').textContent = formatCurrency(data.newBalance);
+    document.getElementById('profileModal').classList.add('show');
   } catch (error) {
     showAlert(error.message, 'error');
   }
@@ -1288,6 +1305,8 @@ window.onclick = function(event) {
   if (event.target == registerAuctionModal) registerAuctionModal.classList.remove('show');
   if (event.target == sellProductModal) sellProductModal.classList.remove('show');
   if (event.target == qrModal) qrModal.classList.remove('show');
+  const topupQRModal = document.getElementById('topupQRModal');
+  if (event.target == topupQRModal) topupQRModal.classList.remove('show');
 };
 
 // Close dropdown when clicking outside

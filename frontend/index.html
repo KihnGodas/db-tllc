@@ -107,6 +107,7 @@
 
           <div class="auction-status">
             <p><strong>Trạng Thái:</strong> <span id="detailStatus"></span></p>
+            <p><strong>Thời Gian Đăng Ký:</strong> <span id="detailStartTime"></span></p>
             <p><strong>Thời Gian Kết Thúc:</strong> <span id="detailEndTime"></span></p>
             <p><strong>Số Người Tham Gia:</strong> <span id="detailParticipants"></span></p>
           </div>
@@ -472,6 +473,23 @@
           <button type="button" class="btn-secondary" onclick="closeSellProductModal()" style="padding: 0.9rem;">❌ Hủy</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Modal: QR Nạp Tiền -->
+  <div id="topupQRModal" class="modal">
+    <div class="modal-content small">
+      <span class="close" onclick="closeTopupQRModal()">&times;</span>
+      <h3 style="text-align:center; margin-bottom:1.5rem;">📱 Nạp Tiền Qua QR</h3>
+      <div style="text-align:center;">
+        <p style="margin-bottom:0.5rem;">Số tiền cần chuyển:</p>
+        <p id="topupQRAmount" style="font-size:1.6rem; font-weight:bold; color:#667eea; margin-bottom:1.5rem;"></p>
+        <div style="display:flex; justify-content:center; margin-bottom:1.5rem;">
+          <img id="topupQRImage" src="" alt="QR Nạp Tiền" style="width:220px; height:220px; border:2px solid #ddd; border-radius:8px;">
+        </div>
+        <p style="color:#666; font-size:0.9rem; margin-bottom:1.5rem;">Quét mã QR bằng app ngân hàng, sau khi chuyển khoản xong nhấn xác nhận.</p>
+        <button class="btn-primary" style="width:100%;" onclick="confirmTopupQR()">✅ Xác Nhận Đã Chuyển Khoản</button>
+      </div>
     </div>
   </div>
 
