@@ -145,10 +145,10 @@ async function syncAuctionStatuses(pool, io) {
     await transaction.begin();
 
     try {
-      const txRequest = new sql.Request(transaction);
-      txRequest.input('auction_id', sql.VarChar, row.auction_id);
-
-      const auctionResult = await txRequest.query(`
+      // Step 1: Get auction details
+      const auctionRequest = new sql.Request(transaction);
+      auctionRequest.input('auction_id', sql.VarChar, row.auction_id);
+      const auctionResult = await auctionRequest.query(`
         SELECT auction_id, current_price, winner_id, auction_status, deposit
         FROM dbo.auctions
         WHERE auction_id = @auction_id
@@ -158,7 +158,10 @@ async function syncAuctionStatuses(pool, io) {
       const auction = auctionResult.recordset[0];
       if (auction.auction_status !== 'ongoing') { await transaction.rollback(); continue; }
 
-      const winnerResult = await txRequest.query(`
+      // Step 2: Get winner from bids
+      const winnerRequest = new sql.Request(transaction);
+      winnerRequest.input('auction_id', sql.VarChar, row.auction_id);
+      const winnerResult = await winnerRequest.query(`
         SELECT TOP 1 user_id, bid_price
         FROM dbo.bids_history
         WHERE auction_id = @auction_id
@@ -168,6 +171,7 @@ async function syncAuctionStatuses(pool, io) {
       let winnerId = winnerResult.recordset.length > 0 ? winnerResult.recordset[0].user_id : (auction.winner_id || null);
       let winningPrice = winnerResult.recordset.length > 0 ? winnerResult.recordset[0].bid_price : (auction.current_price || 0);
 
+      // Step 3: Update auction as ended
       await new sql.Request(transaction)
         .input('auction_id', sql.VarChar, row.auction_id)
         .input('winner_id', sql.VarChar, winnerId)
@@ -363,14 +367,14 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     transaction = new sql.Transaction(pool);
     await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
-    // Lock this auction row to prevent concurrent bid race conditions.
-    const checkAuction = await new sql.Request(transaction)
-      .input('auction_id', sql.VarChar, auction_id)
-      .query(`
-        SELECT *
-        FROM dbo.auctions WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
-        WHERE auction_id = @auction_id
-      `);
+    // Step 1: Lock and get auction
+    const auctionReq = new sql.Request(transaction);
+    auctionReq.input('auction_id', sql.VarChar, auction_id);
+    const checkAuction = await auctionReq.query(`
+      SELECT *
+      FROM dbo.auctions WITH (UPDLOCK, HOLDLOCK, ROWLOCK)
+      WHERE auction_id = @auction_id
+    `);
 
     if (checkAuction.recordset.length === 0) {
       await transaction.rollback();
@@ -379,7 +383,7 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
 
     const auction = checkAuction.recordset[0];
 
-    // ✅ Verify auction status is 'ongoing' - critical check
+    // ✅ Verify auction status is 'ongoing'
     if (auction.auction_status !== 'ongoing') {
       await transaction.rollback();
       return res.status(400).json({ 
@@ -388,18 +392,18 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check if user is registered for this auction
-    const checkReg = await new sql.Request(transaction)
-      .input('auction_id', sql.VarChar, auction_id)
-      .input('user_id', sql.VarChar, user_id)
-      .query('SELECT * FROM dbo.registration WHERE auction_id = @auction_id AND user_id = @user_id');
+    // Step 2: Check registration
+    const regReq = new sql.Request(transaction);
+    regReq.input('auction_id', sql.VarChar, auction_id);
+    regReq.input('user_id', sql.VarChar, user_id);
+    const checkReg = await regReq.query('SELECT * FROM dbo.registration WHERE auction_id = @auction_id AND user_id = @user_id');
 
     if (checkReg.recordset.length === 0) {
       await transaction.rollback();
       return res.status(403).json({ error: 'Bạn phải đăng ký tham gia phiên đấu giá trước khi có thể đặt giá' });
     }
 
-    // Validate bước giá: bid_price >= current_price + bid_increment
+    // Validate bước giá
     const minBid = Number(auction.current_price) + Number(auction.bid_increment);
     if (bid_price < minBid) {
       await transaction.rollback();
@@ -408,10 +412,10 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
       });
     }
 
-    // Check user balance
-    const userResult = await new sql.Request(transaction)
-      .input('user_id', sql.VarChar, user_id)
-      .query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
+    // Step 3: Check user balance
+    const userReq = new sql.Request(transaction);
+    userReq.input('user_id', sql.VarChar, user_id);
+    const userResult = await userReq.query('SELECT balance FROM dbo.users WHERE user_id = @user_id');
 
     if (userResult.recordset.length === 0) {
       await transaction.rollback();
@@ -419,29 +423,27 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     }
 
     const userBalance = userResult.recordset[0].balance;
-
     if (userBalance < bid_price) {
       await transaction.rollback();
       return res.status(400).json({ error: 'Insufficient balance. Please top up your account.' });
     }
 
-    // Insert bid and update current leading winner.
-    const req1 = new sql.Request(transaction)
-      .input('auction_id', sql.VarChar, auction_id)
-      .input('user_id', sql.VarChar, user_id)
-      .input('bid_price', sql.Decimal(18, 0), bid_price);
-    
-    await req1.query(`INSERT INTO dbo.bids_history (auction_id, user_id, bid_price)
-        VALUES (@auction_id, @user_id, @bid_price)`);
+    // Step 4: Insert bid
+    const bidReq = new sql.Request(transaction);
+    bidReq.input('auction_id', sql.VarChar, auction_id);
+    bidReq.input('user_id', sql.VarChar, user_id);
+    bidReq.input('bid_price', sql.Decimal(18, 0), bid_price);
+    await bidReq.query(`INSERT INTO dbo.bids_history (auction_id, user_id, bid_price)
+      VALUES (@auction_id, @user_id, @bid_price)`);
 
-    const req2 = new sql.Request(transaction)
-      .input('auction_id', sql.VarChar, auction_id)
-      .input('bid_price', sql.Decimal(18, 0), bid_price)
-      .input('user_id', sql.VarChar, user_id);
-    
-    await req2.query(`UPDATE dbo.auctions 
-        SET current_price = @bid_price, winner_id = @user_id
-        WHERE auction_id = @auction_id`);
+    // Step 5: Update auction with new winning bid
+    const updateReq = new sql.Request(transaction);
+    updateReq.input('auction_id', sql.VarChar, auction_id);
+    updateReq.input('bid_price', sql.Decimal(18, 0), bid_price);
+    updateReq.input('user_id', sql.VarChar, user_id);
+    await updateReq.query(`UPDATE dbo.auctions 
+      SET current_price = @bid_price, winner_id = @user_id
+      WHERE auction_id = @auction_id`);
     
     await transaction.commit();
     transaction = null;
