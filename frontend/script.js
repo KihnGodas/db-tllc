@@ -229,6 +229,22 @@ function createAuctionCard(auction) {
   const endTime = new Date(auction.end_time);
   const timeLeft = formatTimeLeft(endTime);
 
+  // Hiển thị thông tin người thắng nếu phiên đã kết thúc
+  let winnerInfo = '';
+  if (auction.auction_status === 'ended' && auction.winner_name) {
+    const isCurrentUserWinner = currentUser && auction.winner_id === currentUser.user_id;
+    const winnerStyle = isCurrentUserWinner 
+      ? 'background:#d4edda; color:#155724; border:2px solid #28a745;' 
+      : 'background:#d4edda; color:#155724;';
+    
+    winnerInfo = `
+      <div class="winner-info" style="${winnerStyle} padding:0.5rem; border-radius:4px; margin:0.5rem 0; font-size:0.9rem; text-align:center;">
+        ${isCurrentUserWinner ? '🎉 BẠN ĐÃ THẮNG!' : `🏆 ${auction.winner_name}`}<br>
+        ${formatCurrency(auction.current_price)}
+      </div>
+    `;
+  }
+
   card.innerHTML = `
     <div class="auction-image">
       <img src="${auction.picture_url || 'https://via.placeholder.com/280x200?text=No+Image'}" alt="${auction.product_name}">
@@ -237,6 +253,7 @@ function createAuctionCard(auction) {
       <h3>${auction.product_name}</h3>
       <p class="seller-info">Người bán: ${auction.seller_name}</p>
       <div class="price-display">${formatCurrency(auction.current_price || auction.opening_bid)}</div>
+      ${winnerInfo}
       <div class="auction-meta">
         <span>📍 ${auction.participant_count || 0} người</span>
         <span>⏱️ ${timeLeft}</span>
@@ -315,6 +332,31 @@ function initSocket() {
     if (countdownInterval) clearInterval(countdownInterval);
     const el = document.getElementById('detailCountdown');
     if (el) { el.textContent = '⏰ Đã kết thúc'; el.style.color = '#999'; }
+    
+    // Hiển thị thông báo người thắng nếu có thông tin
+    if (payload.winner_id) {
+      const winnerAnnouncement = document.getElementById('winnerAnnouncement');
+      if (winnerAnnouncement) {
+        const isCurrentUserWinner = currentUser && payload.winner_id === currentUser.user_id;
+        const winnerText = isCurrentUserWinner ? '🎉 BẠN LÀ NGƯỜI CHIẾN THẮNG!' : `🏆 NGƯỜI CHIẾN THẮNG: ${payload.winner_name || payload.winner_id}`;
+        const bgColor = isCurrentUserWinner ? '#d4edda' : '#d4edda';
+        
+        winnerAnnouncement.innerHTML = `
+          ${winnerText}<br>
+          💰 <strong>GIÁ TRÚNG THẦU:</strong> ${formatCurrency(payload.final_price)}
+        `;
+        winnerAnnouncement.style.backgroundColor = bgColor;
+        winnerAnnouncement.style.display = 'block';
+        
+        // Thông báo đặc biệt nếu người dùng thắng
+        if (isCurrentUserWinner) {
+          setTimeout(() => {
+            showAlert('🎉 Chúc mừng! Bạn đã thắng phiên đấu giá này!', 'success');
+          }, 1000);
+        }
+      }
+    }
+    
     // Reload chi tiết để cập nhật trạng thái và nút
     showAuctionDetail(payload.auction_id);
   });
@@ -374,6 +416,23 @@ async function showAuctionDetail(auctionId) {
     document.getElementById('detailEntryFee').textContent = formatCurrency(auction.entry_fee || 0);
     document.getElementById('detailDeposit').textContent = formatCurrency(auction.deposit || 0);
     document.getElementById('detailStatus').textContent = translateStatus(auction.auction_status);
+    
+    // Hiển thị người thắng nếu phiên đã kết thúc
+    const winnerAnnouncement = document.getElementById('winnerAnnouncement');
+    if (auction.auction_status === 'ended' && auction.winner_name) {
+      const isCurrentUserWinner = currentUser && auction.winner_id === currentUser.user_id;
+      const winnerText = isCurrentUserWinner ? '🎉 BẠN LÀ NGƯỜI CHIẾN THẮNG!' : `🏆 NGƯỜI CHIẾN THẮNG: ${auction.winner_name}`;
+      const bgColor = isCurrentUserWinner ? '#d4edda' : '#d4edda'; // Có thể đổi màu khác nhau
+      
+      winnerAnnouncement.innerHTML = `
+        ${winnerText}<br>
+        💰 <strong>GIÁ TRÚNG THẦU:</strong> ${formatCurrency(auction.current_price)}
+      `;
+      winnerAnnouncement.style.backgroundColor = bgColor;
+      winnerAnnouncement.style.display = 'block';
+    } else {
+      winnerAnnouncement.style.display = 'none';
+    }
     document.getElementById('detailRegStartTime').textContent = auction.registration_start_time ? formatDateTime(auction.registration_start_time) : 'N/A';
     document.getElementById('detailRegEndTime').textContent = auction.registration_end_time ? formatDateTime(auction.registration_end_time) : 'N/A';
     document.getElementById('detailStartTime').textContent = formatDateTime(auction.start_time);
