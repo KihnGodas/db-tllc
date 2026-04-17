@@ -10,7 +10,17 @@ const OVERDUE_DAYS        = 7;            // quá hạn sau 7 ngày
 
 // ─── syncAuctionStatuses ─────────────────────────────────────────────────────
 async function syncAuctionStatuses(pool, io) {
-  // 1. upcomming → ongoing
+  // 1. upcomming → ongoing: Lấy danh sách trước khi update để broadcast thay đổi
+  const statusChangeResult = await pool.request().query(`
+    SELECT auction_id
+    FROM dbo.auctions
+    WHERE auction_status = 'upcomming'
+      AND start_time <= GETDATE()
+      AND end_time > GETDATE()
+  `);
+
+  const transitioningAuctions = statusChangeResult.recordset.map(r => r.auction_id);
+
   await pool.request().query(`
     UPDATE dbo.auctions
     SET auction_status = 'ongoing'
@@ -18,6 +28,17 @@ async function syncAuctionStatuses(pool, io) {
       AND start_time <= GETDATE()
       AND end_time > GETDATE()
   `);
+
+  // Broadcast status change to all clients watching these auctions
+  if (io && transitioningAuctions.length > 0) {
+    transitioningAuctions.forEach(auctionId => {
+      io.emit('auction:statusChanged', {
+        auction_id: auctionId,
+        new_status: 'ongoing',
+        timestamp: new Date().toISOString()
+      });
+    });
+  }
 
   // 2. Xử lý quá hạn thanh toán: mất cọc + đấu giá lại
   const overdueResult = await pool.request().query(`
@@ -340,6 +361,15 @@ router.post('/auctions/:auction_id/bid', authMiddleware, async (req, res) => {
     }
 
     const auction = checkAuction.recordset[0];
+
+    // ✅ Verify auction status is 'ongoing' - critical check
+    if (auction.auction_status !== 'ongoing') {
+      await transaction.rollback();
+      return res.status(400).json({ 
+        error: `Trạng thái phiên không hợp lệ để đặt giá. Phiên hiện tại: ${auction.auction_status === 'upcomming' ? 'Sắp bắt đầu' : auction.auction_status === 'ended' ? 'Đã kết thúc' : 'Đã hủy'}`,
+        currentStatus: auction.auction_status
+      });
+    }
 
     // Check if user is registered for this auction
     const checkReg = await txRequest

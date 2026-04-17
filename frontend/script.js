@@ -20,6 +20,7 @@ let lastWinnerAnnouncedAuctionId = null;
 // WebSocket (socket.io) for real-time bidding updates
 let socket = null;
 let activeAuctionId = null;
+let statusRefreshInterval = null; // Auto-refresh auction status every 30 seconds
 
 // Cache invoices of the logged-in user (used in "won" UI)
 let myInvoices = [];
@@ -317,6 +318,13 @@ function initSocket() {
     // Reload chi tiết để cập nhật trạng thái và nút
     showAuctionDetail(payload.auction_id);
   });
+
+  socket.on('auction:statusChanged', (payload) => {
+    if (!payload || payload.auction_id !== activeAuctionId) return;
+    // Khi trạng thái phiên thay đổi (vd: upcomming → ongoing), reload lại chi tiết
+    console.log(`🔄 Phiên ${payload.auction_id} chuyển sang trạng thái: ${payload.new_status}`);
+    showAuctionDetail(payload.auction_id);
+  });
 }
 
 function joinAuctionRoom(auctionId) {
@@ -425,6 +433,22 @@ async function showAuctionDetail(auctionId) {
     }
 
     document.getElementById('auctionModal').classList.add('show');
+
+    // 🔄 Auto-refresh auction status every 30 seconds to catch transitions
+    // (e.g., upcomming → ongoing)
+    if (statusRefreshInterval) clearInterval(statusRefreshInterval);
+    statusRefreshInterval = setInterval(() => {
+      fetch(`${API_URL}/auctions/${auctionId}`)
+        .then(res => res.json())
+        .then(updatedAuction => {
+          if (updatedAuction.auction_status !== currentAuction.auction_status) {
+            console.log(`⏱️ Status change detected: ${currentAuction.auction_status} → ${updatedAuction.auction_status}`);
+            // Re-load auction details to update UI
+            showAuctionDetail(auctionId);
+          }
+        })
+        .catch(err => console.error('Auto-refresh error:', err));
+    }, 30000); // Every 30 seconds
   } catch (error) {
     showAlert('Error loading auction details', 'error');
     console.error(error);
@@ -436,6 +460,7 @@ function closeAuctionModal() {
   leaveAuctionRoom(activeAuctionId);
   activeAuctionId = null;
   if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+  if (statusRefreshInterval) { clearInterval(statusRefreshInterval); statusRefreshInterval = null; }
 }
 
 function showBidForm() {
