@@ -10,9 +10,12 @@ const OVERDUE_DAYS        = 7;            // quá hạn sau 7 ngày
 
 // ─── syncAuctionStatuses ─────────────────────────────────────────────────────
 async function syncAuctionStatuses(pool, io) {
+  const now = new Date();
+  console.log(`🔄 Starting auction status sync at ${now.toISOString()} (local: ${now.toLocaleString()})`);
+  
   // 1. upcomming → ongoing: Lấy danh sách trước khi update để broadcast thay đổi
   const statusChangeResult = await pool.request().query(`
-    SELECT auction_id
+    SELECT auction_id, start_time, end_time
     FROM dbo.auctions
     WHERE auction_status = 'upcomming'
       AND start_time <= GETDATE()
@@ -20,14 +23,26 @@ async function syncAuctionStatuses(pool, io) {
   `);
 
   const transitioningAuctions = statusChangeResult.recordset.map(r => r.auction_id);
+  console.log(`📅 Found ${transitioningAuctions.length} auctions to transition from upcomming to ongoing:`, transitioningAuctions);
+  
+  if (statusChangeResult.recordset.length > 0) {
+    console.log('📋 Auction details:', statusChangeResult.recordset.map(r => ({
+      id: r.auction_id,
+      start: r.start_time,
+      end: r.end_time
+    })));
+  }
 
-  await pool.request().query(`
-    UPDATE dbo.auctions
-    SET auction_status = 'ongoing'
-    WHERE auction_status = 'upcomming'
-      AND start_time <= GETDATE()
-      AND end_time > GETDATE()
-  `);
+  if (transitioningAuctions.length > 0) {
+    await pool.request().query(`
+      UPDATE dbo.auctions
+      SET auction_status = 'ongoing'
+      WHERE auction_status = 'upcomming'
+        AND start_time <= GETDATE()
+        AND end_time > GETDATE()
+    `);
+    console.log('✅ Updated auctions to ongoing status');
+  }
 
   // Broadcast status change to all clients watching these auctions
   if (io && transitioningAuctions.length > 0) {
@@ -37,6 +52,7 @@ async function syncAuctionStatuses(pool, io) {
         new_status: 'ongoing',
         timestamp: new Date().toISOString()
       });
+      console.log(`📡 Broadcasted status change for auction ${auctionId} to ongoing`);
     });
   }
 
@@ -121,6 +137,8 @@ async function syncAuctionStatuses(pool, io) {
     WHERE auction_status = 'ongoing'
       AND end_time <= GETDATE()
   `);
+
+  console.log(`⏰ Found ${endedAuctionsResult.recordset.length} auctions to end:`, endedAuctionsResult.recordset.map(r => r.auction_id));
 
   for (const row of endedAuctionsResult.recordset) {
     const transaction = new sql.Transaction(pool);
@@ -790,3 +808,46 @@ router.get('/auctions/:auction_id/registration-status', authMiddleware, async (r
 });
 
 module.exports = router;
+
+// Export syncAuctionStatuses for background job
+module.exports.syncAuctionStatuses = syncAuctionStatuses;
+
+// ─── Manual sync endpoint for debugging/admin purposes ──────────────────────
+router.post('/auctions/sync-statuses', async (req, res) => {
+  try {
+    const pool = getPool();
+    const io = req.app.get('io');
+    await syncAuctionStatuses(pool, io);
+    res.json({ message: 'Auction statuses synced successfully' });
+  } catch (error) {
+    console.error('Manual sync error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Debug endpoint to check auction statuses ───────────────────────────────
+router.get('/auctions/status-summary', async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.request().query(`
+      SELECT 
+        auction_status,
+        COUNT(*) as count,
+        STRING_AGG(CAST(auction_id AS VARCHAR(10)), ', ') as auction_ids
+      FROM dbo.auctions
+      GROUP BY auction_status
+    `);
+    
+    const now = new Date();
+    const summary = {
+      current_time: now.toISOString(),
+      local_time: now.toLocaleString(),
+      statuses: result.recordset
+    };
+    
+    res.json(summary);
+  } catch (error) {
+    console.error('Status summary error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});

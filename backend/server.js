@@ -8,6 +8,9 @@ const authRoutes = require('./routes/authRoutes');
 const auctionRoutes = require('./routes/auctionRoutes');
 const productRoutes = require('./routes/productRoutes');
 
+// ─── Import syncAuctionStatuses function for background job ──────────────────
+const { syncAuctionStatuses } = require('./routes/auctionRoutes');
+
 const app = express();
 
 const { Server } = require('socket.io');
@@ -67,6 +70,20 @@ async function startServer() {
     httpServer.listen(PORT, () => {
       console.log(`🚀 Server (HTTP + WebSocket) running on http://localhost:${PORT}`);
     });
+
+    // ─── Background job: Auto-sync auction statuses every 30 seconds ────────
+    console.log('⏰ Starting background job: Auto-sync auction statuses every 30 seconds');
+    setInterval(async () => {
+      try {
+        const { getPool } = require('./config/db');
+        const pool = getPool();
+        await syncAuctionStatuses(pool, io);
+        console.log('✅ Auction statuses synced automatically');
+      } catch (error) {
+        console.error('❌ Background sync error:', error.message);
+      }
+    }, 30 * 1000); // Every 30 seconds
+
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
