@@ -615,7 +615,7 @@ router.post('/auctions', authMiddleware, async (req, res) => {
           (@product_id, @opening_bid, @current_price, @bid_increment, @entry_fee, @deposit,
            @registration_start_time, @registration_end_time, @start_time, @end_time,
            @auction_status, @participant_count);
-        SELECT TOP 1 * FROM dbo.auctions WHERE product_id = @product_id ORDER BY created_at DESC
+        SELECT TOP 1 * FROM dbo.auctions WHERE stt = SCOPE_IDENTITY()
       `);
 
     res.status(201).json({ message: 'Tạo phiên đấu giá thành công', auction: result.recordset[0] });

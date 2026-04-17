@@ -60,10 +60,10 @@ router.post('/products', authMiddleware, async (req, res) => {
       .query(`
         INSERT INTO dbo.products (user_id, category_id, product_name, description, picture_url, product_status)
         VALUES (@user_id, @category_id, @product_name, @description, @picture_url, @product_status);
-        SELECT * FROM dbo.products WHERE user_id = @user_id ORDER BY stt DESC
+        SELECT TOP 1 * FROM dbo.products WHERE stt = SCOPE_IDENTITY()
       `);
 
-    const product = result.recordset[result.recordset.length - 1];
+    const product = result.recordset[0];
 
     res.status(201).json({
       message: 'Product created successfully',
