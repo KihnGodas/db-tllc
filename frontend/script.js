@@ -1230,15 +1230,19 @@ function showSellProductModal() {
     return;
   }
 
+  // Reset form trước khi mở
+  const form = document.getElementById('sellProductModal').querySelector('form');
+  if (form) form.reset();
+
   loadCategoriesForProduct();
   document.getElementById('sellProductModal').classList.add('show');
   
   // Set default times
   const now = new Date();
-  const regStart = new Date(now.getTime() + 60000);          // 1 phút nữa mở đăng ký
-  const regEnd = new Date(now.getTime() + 24 * 3600000);     // 24h sau đóng đăng ký
-  const startTime = new Date(regEnd.getTime());              // Bắt đầu đấu giá ngay sau đóng đăng ký
-  const endTime = new Date(startTime.getTime() + 24 * 3600000); // Kết thúc sau 24h
+  const regStart = new Date(now.getTime() + 60000);
+  const regEnd = new Date(now.getTime() + 24 * 3600000);
+  const startTime = new Date(regEnd.getTime());
+  const endTime = new Date(startTime.getTime() + 24 * 3600000);
 
   document.getElementById('productRegStartTime').value = regStart.toISOString().slice(0, 16);
   document.getElementById('productRegEndTime').value = regEnd.toISOString().slice(0, 16);
@@ -1376,12 +1380,10 @@ async function submitProduct(event) {
     }
 
     showAlert('✅ Đăng bán sản phẩm thành công! Phiên đấu giá sẽ sắp bắt đầu.', 'success');
-    closeSellProductModal();
-    
-    // Reset form
+
+    // Reset form trước khi đóng
     document.getElementById('sellProductModal').querySelector('form').reset();
-    
-    // Reload auctions
+    closeSellProductModal();
     loadAuctions();
   } catch (error) {
     showAlert(error.message, 'error');
