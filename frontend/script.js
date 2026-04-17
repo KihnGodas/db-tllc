@@ -322,6 +322,7 @@ async function showAuctionDetail(auctionId) {
     const bids = await bidsResponse.json();
 
     document.getElementById('detailName').textContent = auction.product_name;
+    document.getElementById('detailDescription').textContent = auction.description || '';
     document.getElementById('detailImage').src = auction.picture_url || 'https://via.placeholder.com/400x300?text=No+Image';
     document.getElementById('detailSeller').textContent = auction.seller_name;
     document.getElementById('detailOpeningBid').textContent = formatCurrency(auction.opening_bid);
