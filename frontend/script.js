@@ -534,6 +534,7 @@ async function loadCategories() {
     const categories = await response.json();
 
     const select = document.getElementById('categoryFilter');
+    select.innerHTML = '<option value="">Tất Cả Danh Mục</option>';
     categories.forEach(cat => {
       const option = document.createElement('option');
       option.value = cat.category_id;
@@ -543,11 +544,6 @@ async function loadCategories() {
   } catch (error) {
     console.error('Error loading categories:', error);
   }
-}
-
-function filterAuctions() {
-  // Implement filtering logic based on category and search
-  loadAuctions();
 }
 
 // ===== UTILITY FUNCTIONS =====

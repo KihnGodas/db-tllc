@@ -201,9 +201,10 @@ router.get('/auctions', async (req, res) => {
     await syncAuctionStatuses(pool, io);
     const result = await pool.request()
       .query(`
-        SELECT a.*, p.product_name, p.picture_url, u.name as seller_name, wu.name as winner_name
+        SELECT a.*, p.product_name, p.picture_url, p.category_id, c.category_name, u.name as seller_name, wu.name as winner_name
         FROM dbo.auctions a
         JOIN dbo.products p ON a.product_id = p.product_id
+        LEFT JOIN dbo.product_categories c ON p.category_id = c.category_id
         JOIN dbo.users u ON p.user_id = u.user_id
         LEFT JOIN dbo.users wu ON a.winner_id = wu.user_id
         ORDER BY a.created_at DESC
