@@ -808,6 +808,511 @@ router.get('/auctions/:auction_id/registration-status', authMiddleware, async (r
   }
 });
 
+// Get invoice details for printing
+router.get('/invoices/:invoice_id/details', authMiddleware, async (req, res) => {
+  try {
+    const { invoice_id } = req.params;
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    const result = await pool.request()
+      .input('invoice_id', sql.VarChar, invoice_id)
+      .input('user_id', sql.VarChar, user_id)
+      .query(`
+        SELECT 
+          i.invoice_id,
+          i.winner_id,
+          i.created_at,
+          i.due_date,
+          i.payment_status,
+          a.auction_id,
+          a.current_price,
+          a.deposit,
+          a.start_time,
+          a.end_time,
+          p.product_id,
+          p.product_name,
+          p.picture_url,
+          p.description,
+          wu.name as winner_name,
+          wu.email as winner_email,
+          wu.phone_num as winner_phone,
+          wu.address as winner_address,
+          su.name as seller_name,
+          su.email as seller_email,
+          su.phone_num as seller_phone,
+          su.address as seller_address,
+          c.category_name
+        FROM dbo.invoices i
+        JOIN dbo.auctions a ON i.auction_id = a.auction_id
+        JOIN dbo.products p ON a.product_id = p.product_id
+        JOIN dbo.users wu ON i.winner_id = wu.user_id
+        JOIN dbo.users su ON p.user_id = su.user_id
+        LEFT JOIN dbo.product_categories c ON p.category_id = c.category_id
+        WHERE i.invoice_id = @invoice_id AND i.winner_id = @user_id
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    const invoice = result.recordset[0];
+    
+    // Calculate remaining amount (total price - deposit already paid)
+    const totalAmount = Number(invoice.current_price);
+    const depositPaid = Number(invoice.deposit);
+    const remainingAmount = Math.max(0, totalAmount - depositPaid);
+
+    res.json({
+      invoice_id: invoice.invoice_id,
+      invoice_date: invoice.created_at,
+      due_date: invoice.due_date,
+      payment_status: invoice.payment_status,
+      product: {
+        product_id: invoice.product_id,
+        product_name: invoice.product_name,
+        category: invoice.category_name,
+        description: invoice.description,
+        picture_url: invoice.picture_url
+      },
+      auction: {
+        auction_id: invoice.auction_id,
+        start_time: invoice.start_time,
+        end_time: invoice.end_time,
+        final_price: totalAmount
+      },
+      buyer: {
+        name: invoice.winner_name,
+        email: invoice.winner_email,
+        phone: invoice.winner_phone,
+        address: invoice.winner_address
+      },
+      seller: {
+        name: invoice.seller_name,
+        email: invoice.seller_email,
+        phone: invoice.seller_phone,
+        address: invoice.seller_address
+      },
+      amounts: {
+        final_price: totalAmount,
+        deposit_paid: depositPaid,
+        remaining_due: remainingAmount
+      }
+    });
+  } catch (error) {
+    console.error('Get invoice details error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Print invoice as HTML
+router.get('/invoices/:invoice_id/print-html', authMiddleware, async (req, res) => {
+  try {
+    const { invoice_id } = req.params;
+    const user_id = req.user.user_id;
+    const pool = getPool();
+
+    const result = await pool.request()
+      .input('invoice_id', sql.VarChar, invoice_id)
+      .input('user_id', sql.VarChar, user_id)
+      .query(`
+        SELECT 
+          i.invoice_id,
+          i.winner_id,
+          i.created_at,
+          i.due_date,
+          i.payment_status,
+          a.auction_id,
+          a.current_price,
+          a.deposit,
+          a.start_time,
+          a.end_time,
+          p.product_id,
+          p.product_name,
+          p.picture_url,
+          wu.name as winner_name,
+          wu.email as winner_email,
+          wu.phone_num as winner_phone,
+          wu.address as winner_address,
+          su.name as seller_name,
+          su.email as seller_email,
+          su.phone_num as seller_phone,
+          su.address as seller_address
+        FROM dbo.invoices i
+        JOIN dbo.auctions a ON i.auction_id = a.auction_id
+        JOIN dbo.products p ON a.product_id = p.product_id
+        JOIN dbo.users wu ON i.winner_id = wu.user_id
+        JOIN dbo.users su ON p.user_id = su.user_id
+        WHERE i.invoice_id = @invoice_id AND i.winner_id = @user_id
+      `);
+
+    if (result.recordset.length === 0) {
+      return res.status(404).send('Invoice not found');
+    }
+
+    const inv = result.recordset[0];
+    const totalAmount = Number(inv.current_price);
+    const depositPaid = Number(inv.deposit);
+    const remainingAmount = Math.max(0, totalAmount - depositPaid);
+    const invoiceDate = new Date(inv.created_at).toLocaleDateString('vi-VN');
+    const dueDate = new Date(inv.due_date).toLocaleDateString('vi-VN');
+    const auctionEndDate = new Date(inv.end_time).toLocaleString('vi-VN');
+
+    const html = `
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hóa Đơn ${inv.invoice_id}</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: 'Arial', 'Segoe UI', sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+      line-height: 1.6;
+      color: #333;
+    }
+    .invoice-container {
+      max-width: 900px;
+      margin: 0 auto;
+      background: white;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .invoice-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 40px;
+      padding-bottom: 20px;
+      border-bottom: 3px solid #2c3e50;
+    }
+    .company-info h1 {
+      font-size: 28px;
+      color: #2c3e50;
+      margin-bottom: 5px;
+    }
+    .company-info p {
+      color: #666;
+      font-size: 13px;
+    }
+    .invoice-meta {
+      text-align: right;
+    }
+    .invoice-meta h2 {
+      font-size: 24px;
+      color: #e74c3c;
+      margin-bottom: 10px;
+    }
+    .meta-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 5px;
+      font-size: 14px;
+    }
+    .meta-label {
+      font-weight: bold;
+      margin-right: 10px;
+      color: #2c3e50;
+      min-width: 130px;
+      text-align: right;
+    }
+    .meta-value {
+      color: #333;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: bold;
+      color: #2c3e50;
+      background: #ecf0f1;
+      padding: 10px 15px;
+      margin-bottom: 15px;
+      border-left: 4px solid #3498db;
+    }
+    .section-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    }
+    .info-column h3 {
+      font-size: 13px;
+      font-weight: bold;
+      color: #2c3e50;
+      margin-bottom: 8px;
+    }
+    .info-column p {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 5px;
+    }
+    .product-section {
+      margin-bottom: 30px;
+    }
+    .product-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 20px;
+    }
+    .product-table th {
+      background: #2c3e50;
+      color: white;
+      padding: 12px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    .product-table td {
+      padding: 15px 12px;
+      border-bottom: 1px solid #ddd;
+      font-size: 13px;
+    }
+    .product-table tr:hover {
+      background: #f9f9f9;
+    }
+    .product-image {
+      width: 80px;
+      height: 80px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+    .summary-section {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 30px;
+    }
+    .summary-box {
+      width: 350px;
+      background: #f9f9f9;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 20px;
+    }
+    .summary-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-size: 14px;
+    }
+    .summary-row.total {
+      border-top: 2px solid #2c3e50;
+      padding-top: 12px;
+      font-weight: bold;
+      font-size: 16px;
+      color: #2c3e50;
+    }
+    .label {
+      color: #666;
+    }
+    .value {
+      color: #333;
+      font-weight: bold;
+    }
+    .status-paid {
+      color: #27ae60;
+      font-weight: bold;
+    }
+    .status-unpaid {
+      color: #e74c3c;
+      font-weight: bold;
+    }
+    .status-overdue {
+      color: #c0392b;
+      font-weight: bold;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+      text-align: center;
+      color: #666;
+      font-size: 12px;
+    }
+    .print-button {
+      text-align: center;
+      margin-bottom: 30px;
+    }
+    .print-button button {
+      background: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 30px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: bold;
+      transition: background 0.3s;
+    }
+    .print-button button:hover {
+      background: #2980b9;
+    }
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+      .invoice-container {
+        box-shadow: none;
+        padding: 0;
+      }
+      .print-button {
+        display: none;
+      }
+      .footer {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-button">
+    <button onclick="window.print()">🖨️ In Hóa Đơn (Ctrl+P hoặc Cmd+P)</button>
+  </div>
+
+  <div class="invoice-container">
+    <!-- Header -->
+    <div class="invoice-header">
+      <div class="company-info">
+        <h1>🏆 AuctionHub</h1>
+        <p>Hệ Thống Đấu Giá Trực Tuyến</p>
+      </div>
+      <div class="invoice-meta">
+        <h2>HÓA ĐƠN</h2>
+        <div class="meta-row">
+          <span class="meta-label">Mã hóa đơn:</span>
+          <span class="meta-value"><strong>${inv.invoice_id}</strong></span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Ngày tạo:</span>
+          <span class="meta-value">${invoiceDate}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Ngày đáo hạn:</span>
+          <span class="meta-value">${dueDate}</span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Trạng thái:</span>
+          <span class="meta-value status-${inv.payment_status}">
+            ${inv.payment_status === 'paid' ? '✓ Đã thanh toán' : inv.payment_status === 'unpaid' ? '⏳ Chưa thanh toán' : '⚠️ Quá hạn'}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Buyer & Seller Info -->
+    <div class="section">
+      <div class="section-title">THÔNG TIN BÊN LIÊN QUAN</div>
+      <div class="section-content">
+        <div class="info-column">
+          <h3>👤 NGƯỜI MUA (NGƯỜI THẮNG)</h3>
+          <p><strong>${inv.winner_name}</strong></p>
+          <p>📧 ${inv.winner_email}</p>
+          <p>📱 ${inv.winner_phone}</p>
+          <p>📍 ${inv.winner_address}</p>
+        </div>
+        <div class="info-column">
+          <h3>🏬 NGƯỜI BÁN</h3>
+          <p><strong>${inv.seller_name}</strong></p>
+          <p>📧 ${inv.seller_email}</p>
+          <p>📱 ${inv.seller_phone}</p>
+          <p>📍 ${inv.seller_address}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product Details -->
+    <div class="section product-section">
+      <div class="section-title">CHI TIẾT SẢN PHẨM ĐẤU GIÁ</div>
+      <table class="product-table">
+        <thead>
+          <tr>
+            <th style="width: 100px">Hình Ảnh</th>
+            <th style="flex: 1">Sản Phẩm</th>
+            <th style="width: 120px">Mã Đấu Giá</th>
+            <th style="width: 120px">Giá Khởi Điểm</th>
+            <th style="width: 120px">Giá Cuối (Thắng)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <img src="${inv.picture_url}" alt="${inv.product_name}" class="product-image" onerror="this.style.display='none'">
+            </td>
+            <td><strong>${inv.product_name}</strong></td>
+            <td>#${inv.auction_id}</td>
+            <td>N/A</td>
+            <td style="font-weight: bold; color: #e74c3c">${totalAmount.toLocaleString('vi-VN')} VND</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="section-title" style="margin-top: 30px;">THỜI GIAN ĐẤU GIÁ</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 15px;">
+        <div>
+          <p style="color: #666; font-size: 13px; margin-bottom: 5px;">🕐 Thời gian kết thúc:</p>
+          <p style="font-weight: bold; font-size: 14px;">${auctionEndDate}</p>
+        </div>
+        <div>
+          <p style="color: #666; font-size: 13px; margin-bottom: 5px;">🔑 Mã đấu giá:</p>
+          <p style="font-weight: bold; font-size: 14px;">${inv.auction_id}</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary-section">
+      <div class="summary-box">
+        <div class="summary-row">
+          <span class="label">Giá sản phẩm:</span>
+          <span class="value">${totalAmount.toLocaleString('vi-VN')} VND</span>
+        </div>
+        <div class="summary-row">
+          <span class="label">Cọc đã nộp:</span>
+          <span class="value">${depositPaid.toLocaleString('vi-VN')} VND</span>
+        </div>
+        <div class="summary-row total">
+          <span class="label">Còn phải trả:</span>
+          <span class="value">${remainingAmount.toLocaleString('vi-VN')} VND</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="section" style="margin-top: 30px;">
+      <div class="section-title">GHI CHÚ</div>
+      <p style="font-size: 13px; color: #555; line-height: 1.8;">
+        • Hóa đơn này là bằng chứng xác nhận kết quả đấu giá của bạn.<br>
+        • Vui lòng thanh toán đầy đủ số tiền còn lại trước ngày ${dueDate}.<br>
+        • Nếu quá hạn thanh toán, bạn sẽ mất quyền nhận sản phẩm và cọc không được hoàn lại.<br>
+        • Liên hệ người bán để sắp xếp nhận hàng sau khi thanh toán hoàn thành.
+      </p>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <p>Hệ Thống Đấu Giá Trực Tuyến AuctionHub | Được phát hành vào ${invoiceDate}</p>
+    </div>
+  </div>
+</body>
+</html>
+    `;
+
+    res.send(html);
+  } catch (error) {
+    console.error('Print invoice error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
 
 // Export syncAuctionStatuses for background job

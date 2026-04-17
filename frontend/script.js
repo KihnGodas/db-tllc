@@ -1038,8 +1038,50 @@ function closeInvoiceModal() {
   document.getElementById('invoiceModal').classList.remove('show');
 }
 
-function printInvoice() {
-  window.print();
+async function printInvoice() {
+  const invoiceId = document.getElementById('invoiceModal').dataset.invoiceId;
+  if (!invoiceId || !token) return;
+
+  try {
+    showAlert('⏳ Đang tải hóa đơn...', 'info');
+    const printUrl = `${API_URL}/invoices/${invoiceId}/print-html`;
+    
+    // Fetch the HTML invoice
+    const response = await fetch(printUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'text/html'
+      }
+    });
+
+    if (!response.ok) {
+      showAlert('❌ Không thể tải hóa đơn', 'error');
+      return;
+    }
+
+    const html = await response.text();
+    
+    // Open in new window for printing
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.focus();
+      
+      // Optional: auto-trigger print dialog after content loads
+      printWindow.addEventListener('load', function() {
+        setTimeout(() => {
+          printWindow.print();
+        }, 500);
+      });
+    } else {
+      showAlert('❌ Không thể mở cửa sổ in (kiểm tra popup blocker)', 'error');
+    }
+  } catch (error) {
+    console.error('Print invoice error:', error);
+    showAlert(`❌ Lỗi in hóa đơn: ${error.message}`, 'error');
+  }
 }
 
 async function payInvoiceByBalance() {
